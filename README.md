@@ -251,6 +251,17 @@ Useful ranges:
 |----------|-------------|
 | `vj.print(s)` | Print string to stdout with a `[lua]` prefix. |
 
+Lua's standard `print()` is also available and accepts multiple arguments
+separated by tabs, which is handy for quick debugging:
+
+```lua
+print("bass:", vj.fft(4), "dt:", dt)
+-- outputs: bass:   0.42   dt:   0.033
+
+vj.print("bass: " .. vj.fft(4))
+-- outputs: [lua] bass: 0.42
+```
+
 ### Example patches
 
 #### React to OSC and cycle clips
