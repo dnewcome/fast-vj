@@ -81,6 +81,48 @@ Options:
 - **Lua-driven envelope:** `on_frame` increments a blend value each frame
   over N seconds. Works today with `vj.uniform()` if the shader supports it.
 
+### Video crossfade: medium difficulty
+
+The current pipeline has one `image_tex` slot. To crossfade two clips:
+
+1. Add a second texture slot (`image_tex2`) to the shader header and pipeline
+   descriptor in `shaders.c`.
+2. Add a second `views[]` binding in the app bindings struct.
+3. Expose `vj.image2(i)` / `vj.video2(i)` in Lua to set the outgoing clip.
+4. Use an existing `u_p` slot as the blend amount.
+
+The Lua patch drives the fade:
+
+```lua
+local blend = 0
+local fade_time = 1.0
+
+function on_frame(dt)
+    blend = math.min(blend + dt / fade_time, 1.0)
+    vj.uniform(14, blend)  -- shader lerps between image_tex and image_tex2
+end
+```
+
+The shader side is a one-liner: `mix(texture(image_tex, uv), texture(image_tex2, uv), u_p[14])`.
+The C work is roughly an afternoon.
+
+### Shader crossfade: significantly harder
+
+You can't blend two different pipelines in one pass. You'd need:
+
+1. Two offscreen framebuffers (sokol `sg_pass` with `sg_attachments`).
+2. Render shader A → FBO A, shader B → FBO B each frame during the transition.
+3. A third composite pass that blends the two FBO textures on screen.
+
+Sokol supports this but it triples the render passes during any active
+transition and adds meaningful complexity to the frame loop. On Pi, rendering
+the full quad three times per frame has a real performance cost.
+
+**Practical shortcut:** don't blend pipelines at all. On a shader switch,
+animate `u_p` values in `on_frame` to smooth the visual transition within the
+incoming shader rather than truly compositing two pipelines. For most VJ
+purposes this is indistinguishable from a real crossfade.
+
 ---
 
 ## Advanced effects
