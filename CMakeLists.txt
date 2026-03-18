@@ -1,0 +1,82 @@
+cmake_minimum_required(VERSION 3.16)
+project(fast-vj C)
+
+set(CMAKE_C_STANDARD 11)
+
+# ---- Detect Raspberry Pi (ARM) vs desktop ----
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|aarch64")
+    set(TARGET_PI TRUE)
+    message(STATUS "Target: Raspberry Pi (GLES3)")
+else()
+    set(TARGET_PI FALSE)
+    message(STATUS "Target: Desktop (OpenGL 3.3)")
+endif()
+
+# ---- Find system libraries ----
+find_package(Threads REQUIRED)
+
+if(TARGET_PI)
+    # Pi: OpenGL ES 3 via Mesa, EGL for context creation
+    find_library(GLES3_LIB GLESv2 REQUIRED)
+    find_library(EGL_LIB   EGL   REQUIRED)
+    set(GL_LIBS ${GLES3_LIB} ${EGL_LIB})
+    add_compile_definitions(SOKOL_GLES3)
+else()
+    # Desktop Linux: OpenGL 3.3 core + X11
+    find_package(OpenGL REQUIRED)
+    find_library(X11_LIB X11 REQUIRED)
+    find_library(Xi_LIB  Xi)
+    find_library(Xcursor_LIB Xcursor)
+    set(GL_LIBS OpenGL::GL ${X11_LIB} ${Xi_LIB} ${Xcursor_LIB})
+    add_compile_definitions(SOKOL_GLCORE)
+endif()
+
+# ---- KissFFT ----
+add_library(kissfft STATIC
+    lib/kissfft/kiss_fft.c
+    lib/kissfft/kiss_fftr.c
+)
+target_include_directories(kissfft PUBLIC lib/kissfft lib/kissfft/tools)
+
+# ---- tinyosc ----
+add_library(tinyosc STATIC lib/tinyosc/tinyosc.c)
+target_include_directories(tinyosc PUBLIC lib)
+
+# ---- libjpeg-turbo (for video frame decode) ----
+# Header is in lib/turbojpeg.h (fetched by fetch_deps.sh).
+# Runtime .so: apt install libturbojpeg0-dev  (Ubuntu/Debian/Raspbian)
+find_library(TURBOJPEG_LIB turbojpeg REQUIRED)
+message(STATUS "turbojpeg: ${TURBOJPEG_LIB}")
+
+# ---- fast-vj executable ----
+add_executable(fast-vj
+    src/sokol_impl.c
+    src/main.c
+    src/clips.c
+    src/osc.c
+    src/video.c
+)
+
+target_include_directories(fast-vj PRIVATE
+    lib/sokol
+    lib
+)
+
+target_link_libraries(fast-vj PRIVATE
+    kissfft
+    tinyosc
+    ${GL_LIBS}
+    ${TURBOJPEG_LIB}
+    Threads::Threads
+    m       # math
+    dl      # dlopen (sokol needs it on Linux)
+    asound  # ALSA for sokol_audio
+)
+
+# ---- Optional: strip on Pi for smaller binary ----
+if(TARGET_PI AND CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_custom_command(TARGET fast-vj POST_BUILD
+        COMMAND ${CMAKE_STRIP} $<TARGET_FILE:fast-vj>
+        COMMENT "Stripping binary"
+    )
+endif()
