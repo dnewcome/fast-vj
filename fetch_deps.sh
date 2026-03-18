@@ -6,7 +6,7 @@ LIB=lib
 
 # Sokol - the core framework
 SOKOL_DIR=$LIB/sokol
-if [ ! -d "$SOKOL_DIR" ]; then
+if [ ! -f "$SOKOL_DIR/sokol_app.h" ]; then
     echo "Fetching sokol..."
     git clone --depth=1 https://github.com/floooh/sokol.git $SOKOL_DIR
 fi
@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/mackron/dr_libs/master/dr_wav.h -o 
 
 # KissFFT - small FFT library
 KISSFFT_DIR=$LIB/kissfft
-if [ ! -d "$KISSFFT_DIR" ]; then
+if [ ! -f "$KISSFFT_DIR/kiss_fft.c" ]; then
     echo "Fetching kissfft..."
     git clone --depth=1 https://github.com/mborgerding/kissfft.git $KISSFFT_DIR
 fi
@@ -34,7 +34,7 @@ curl -fsSL "https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/3.0.1/
 
 # tinyosc - OSC message parsing (single .h + .c)
 TINYOSC_DIR=$LIB/tinyosc
-if [ ! -d "$TINYOSC_DIR" ]; then
+if [ ! -f "$TINYOSC_DIR/tinyosc.c" ]; then
     echo "Fetching tinyosc..."
     git clone --depth=1 https://github.com/mhroth/tinyosc.git $TINYOSC_DIR
 fi

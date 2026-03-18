@@ -111,6 +111,10 @@ static struct {
     tjhandle        tj;             /* reusable libjpeg-turbo decompressor */
 
     float           time;
+
+    /* FPS counter */
+    int             fps_frames;
+    double          fps_accum;
 } app;
 
 ClipList g_clips;
@@ -156,6 +160,7 @@ static const char *g_script_path  = NULL;
 static const char *g_shaders_dir  = "shaders";
 static int         g_mic_mode     = 0;
 static const char *g_mic_device   = NULL;   /* NULL = "default" */
+static int         g_show_fps     = 0;
 
 static void init(void) {
     sg_setup(&(sg_desc){
@@ -403,13 +408,29 @@ static void update_audio_textures(void) {
 /* ------------------------------------------------------------------ */
 
 static void frame(void) {
-    app.time += (float)sapp_frame_duration();
+    double dt = sapp_frame_duration();
+    app.time += (float)dt;
     g_shader_params.time = app.time;
+
+    if (g_show_fps) {
+        app.fps_frames++;
+        app.fps_accum += dt;
+        if (app.fps_accum >= 1.0) {
+            double fps = app.fps_frames / app.fps_accum;
+            char title[64];
+            snprintf(title, sizeof(title), "fast-vj  %.1f fps", fps);
+            sapp_set_window_title(title);
+            printf("fps: %.1f\n", fps);
+            fflush(stdout);
+            app.fps_frames = 0;
+            app.fps_accum  = 0.0;
+        }
+    }
 
     poll_osc();
     update_video_texture();
     update_audio_textures();
-    script_call_frame(sapp_frame_duration());
+    script_call_frame(dt);
 
     sg_begin_pass(&(sg_pass){
         .action    = app.pass_action,
@@ -451,6 +472,8 @@ sapp_desc sokol_main(int argc, char *argv[]) {
             g_script_path = argv[++i];
         else if (strcmp(argv[i], "-S") == 0 && i + 1 < argc)
             g_shaders_dir = argv[++i];
+        else if (strcmp(argv[i], "-f") == 0)
+            g_show_fps = 1;
         else if (strcmp(argv[i], "-m") == 0) {
             g_mic_mode = 1;
             /* optional device name follows: -m hw:1,0 */
@@ -462,7 +485,7 @@ sapp_desc sokol_main(int argc, char *argv[]) {
             g_osc_port = atoi(argv[i]);
     }
     if (!g_media_dir) {
-        fprintf(stderr, "usage: fast-vj <media-dir> [osc-port] [-s patch.lua] [-S shaders/] [-m [device]]\n");
+        fprintf(stderr, "usage: fast-vj <media-dir> [osc-port] [-s patch.lua] [-S shaders/] [-m [device]] [-f]\n");
         exit(1);
     }
 
