@@ -458,6 +458,70 @@ function on_frame(dt)
 end
 ```
 
+### Sample patches
+
+#### `patches/example.lua` — bass-reactive auto-cut
+
+Switches to a random video clip on bass transients.
+
+```bash
+# Basic: audio clips + videos in media/, OSC on port 9000
+DISPLAY=:0 ./build/fast-vj media/ 9000 -s patches/example.lua
+
+# With mic input and FPS display
+DISPLAY=:0 ./build/fast-vj media/ 9000 -m -f -s patches/example.lua
+```
+
+#### `patches/shader_audio.lua` — audio-reactive plasma shader
+
+Drives plasma speed from bass FFT and image blend from high-mids.
+
+```bash
+# Uses mic input to react to live audio
+DISPLAY=:0 ./build/fast-vj media/ 9000 -m -f -s patches/shader_audio.lua
+```
+
+The patch switches to the plasma shader (index 2 in default shaders/ load order)
+and updates `u_p[0]` (speed) and `u_p[1]` (image blend) each frame from FFT data.
+
+#### `patches/osc_control.lua` — full manual OSC control
+
+No audio reactivity. Every shader parameter is driven by OSC messages.
+
+```bash
+DISPLAY=:0 ./build/fast-vj media/ 9000 -f -s patches/osc_control.lua
+```
+
+Switch shaders and set parameters over OSC:
+
+```bash
+# Switch to shader by index (0 = first .glsl file alphabetically)
+oscsend localhost 9000 /vj/shader i 0   # default
+oscsend localhost 9000 /vj/shader i 1   # oscilloscope
+oscsend localhost 9000 /vj/shader i 2   # plasma
+oscsend localhost 9000 /vj/shader i 3   # spectrum
+
+# Set shader uniform parameters (u_p[0]..u_p[14])
+oscsend localhost 9000 /vj/p0 f 0.8    # plasma: speed
+oscsend localhost 9000 /vj/p1 f 0.5    # plasma: image blend amount
+oscsend localhost 9000 /vj/p0 f 0.5    # oscilloscope: glow intensity
+oscsend localhost 9000 /vj/p1 f 1.2    # oscilloscope: waveform amplitude
+oscsend localhost 9000 /vj/p2 f 0.3    # oscilloscope: image blend amount
+oscsend localhost 9000 /vj/p0 f 1.0    # spectrum: brightness
+
+# Built-in engine commands still work alongside the patch
+oscsend localhost 9000 /vj/image i 0   # show image clip 0
+oscsend localhost 9000 /vj/audio i 0   # play audio clip 0
+oscsend localhost 9000 /vj/gain  f 0.7 # set master gain
+oscsend localhost 9000 /vj/stop        # stop audio
+```
+
+Install `oscsend` on Debian/Ubuntu/Raspbian:
+
+```bash
+sudo apt install liblo-tools
+```
+
 ### Live patching (future)
 
 The function `script_eval(code)` is exposed internally and can be wired to
