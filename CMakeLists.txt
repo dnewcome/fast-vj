@@ -31,9 +31,13 @@ endif()
 
 if(TARGET_PI)
     # Pi: OpenGL ES 3 via Mesa, EGL for context creation
+    # Sokol still uses X11 for windowing on Linux
     find_library(GLES3_LIB GLESv2 REQUIRED)
     find_library(EGL_LIB   EGL   REQUIRED)
-    set(GL_LIBS ${GLES3_LIB} ${EGL_LIB})
+    find_library(X11_LIB   X11   REQUIRED)
+    find_library(Xi_LIB    Xi)
+    find_library(Xcursor_LIB Xcursor)
+    set(GL_LIBS ${GLES3_LIB} ${EGL_LIB} ${X11_LIB} ${Xi_LIB} ${Xcursor_LIB})
     add_compile_definitions(SOKOL_GLES3)
 else()
     # Desktop Linux: OpenGL 3.3 core + X11
