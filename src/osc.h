@@ -12,9 +12,22 @@
  *   /vj/image  <int>    — switch to image clip by index (-1 = blank)
  *   /vj/gain   <float>  — master audio gain (default 1.0)
  *   /vj/stop           — stop audio playback
+ *   <anything else>    — forwarded to Lua on_osc(addr, val)
  */
 
 #include <stdatomic.h>
+#include <pthread.h>
+
+/* Generic OSC message queue — unrecognised addresses land here so the
+   render thread can forward them to Lua without involving more atomics. */
+#define OSC_QUEUE_SIZE 32
+
+typedef struct {
+    char  addr[64];
+    char  type;    /* 'f' or 'i' */
+    float fval;
+    int   ival;
+} OscMsg;
 
 typedef struct {
     _Atomic int   pending_audio;  /* -1 = no pending, >=0 = clip index */
@@ -23,6 +36,12 @@ typedef struct {
     _Atomic int   stop_audio;     /* non-zero = stop requested */
     /* gain stored as IEEE 754 bits so we can use _Atomic int */
     _Atomic int   gain_bits;      /* reinterpret_cast<int>(float gain) */
+
+    /* Generic message queue for Lua forwarding */
+    OscMsg        queue[OSC_QUEUE_SIZE];
+    int           q_head;         /* written by listener thread */
+    int           q_tail;         /* read by render thread       */
+    pthread_mutex_t q_mutex;
 } OscState;
 
 extern OscState g_osc;

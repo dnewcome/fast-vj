@@ -39,6 +39,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
+#include <pthread.h>
 
 /* KissFFT compiled separately */
 #include "kiss_fft.h"
@@ -322,6 +323,17 @@ static void poll_osc(void) {
         }
         script_call_osc("/vj/video", 'i', req_vid, 0);
     }
+
+    /* Generic queue — forward unrecognised addresses to Lua */
+    pthread_mutex_lock(&g_osc.q_mutex);
+    while (g_osc.q_tail != g_osc.q_head) {
+        OscMsg m = g_osc.queue[g_osc.q_tail];
+        g_osc.q_tail = (g_osc.q_tail + 1) % OSC_QUEUE_SIZE;
+        pthread_mutex_unlock(&g_osc.q_mutex);
+        script_call_osc(m.addr, m.type, m.ival, m.fval);
+        pthread_mutex_lock(&g_osc.q_mutex);
+    }
+    pthread_mutex_unlock(&g_osc.q_mutex);
 }
 
 /* ------------------------------------------------------------------ */

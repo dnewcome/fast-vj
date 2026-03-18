@@ -64,7 +64,29 @@ static void dispatch(tosc_message *msg) {
         printf("osc: /vj/stop\n");
 
     } else {
-        printf("osc: unhandled %s %s\n", addr, fmt);
+        /* Forward to Lua via the generic queue */
+        OscMsg m;
+        strncpy(m.addr, addr, sizeof(m.addr) - 1);
+        m.addr[sizeof(m.addr) - 1] = '\0';
+        if (fmt[0] == 'f') {
+            m.type = 'f';
+            m.fval = tosc_getNextFloat(msg);
+            m.ival = 0;
+        } else if (fmt[0] == 'i') {
+            m.type = 'i';
+            m.ival = tosc_getNextInt32(msg);
+            m.fval = 0;
+        } else {
+            m.type = 0;
+            m.fval = 0; m.ival = 0;
+        }
+        pthread_mutex_lock(&g_osc.q_mutex);
+        int next = (g_osc.q_head + 1) % OSC_QUEUE_SIZE;
+        if (next != g_osc.q_tail) {   /* drop if full */
+            g_osc.queue[g_osc.q_head] = m;
+            g_osc.q_head = next;
+        }
+        pthread_mutex_unlock(&g_osc.q_mutex);
     }
 }
 
@@ -107,6 +129,9 @@ void osc_init(int port) {
     atomic_store(&g_osc.pending_video, -1);
     atomic_store(&g_osc.stop_audio,     0);
     store_gain(1.0f);
+    g_osc.q_head = 0;
+    g_osc.q_tail = 0;
+    pthread_mutex_init(&g_osc.q_mutex, NULL);
 
     s_sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (s_sock < 0) { perror("osc: socket"); return; }
@@ -139,4 +164,5 @@ void osc_shutdown(void) {
         s_sock = -1;
     }
     pthread_join(s_thread, NULL);
+    pthread_mutex_destroy(&g_osc.q_mutex);
 }
