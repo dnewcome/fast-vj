@@ -24,21 +24,88 @@ thread anyway.
 
 ---
 
-## Interactive Lua shell / live coding
+## Hot reloading: shaders, media, and Lua
 
-**TODO:** Expose an interactive Lua REPL so the environment can be modified
-at runtime without restarting.
+The goal is to be able to change any part of the running system — shaders,
+media clips, Lua patch — without restarting the process or dropping frames.
 
-Options:
-- Read from stdin on a background thread, eval each line with `script_eval()`
-  on the next frame tick.
-- Listen on a TCP port for code strings (e.g. from an editor plugin or
-  netcat). Functions redefined this way take effect on the next `on_frame`
-  call — no restart required.
-- A dedicated OSC address `/vj/eval s <code>` to send Lua snippets over UDP.
+### Shader hot reload
 
-Live coding would allow redefining `on_frame` and `on_osc` while the
-visuals are running — the core use case for a performance tool.
+Feasible now with minimal work. All sokol GPU calls must happen on the render
+thread, so reloading has to happen inside `frame()`.
+
+**Option 1 — OSC-triggered:** `/vj/reload i <index>` re-reads the `.glsl`
+file, recompiles shader + pipeline. On success, swap in the new ones and
+destroy the old. On failure, keep the old shader running and print the error.
+The user saves the file then sends the OSC message.
+
+**Option 2 — Automatic mtime polling (preferred):** Store `time_t mtime` in
+the `Shader` struct at load time. Once per second on the render thread, call
+`stat()` on each file. If mtime changed, reload. Edit and save in your editor,
+the shader hot-swaps within one second — no OSC needed. Implementation:
+- Add `time_t mtime` to `Shader` struct in `shaders.h`
+- Add `shaders_reload_changed()` in `shaders.c` — stats files, recompiles if changed
+- Call from `frame()` every ~60 frames
+- On compile failure: print error, keep old pipeline running
+
+Both options can coexist. Mtime polling is the day-to-day workflow; OSC
+trigger is useful for forcing a reload when mtime polling isn't appropriate
+(e.g. NFS mounts, cross-compiled files).
+
+### Media hot add
+
+Adding clips to a running instance without restarting. The challenge is that
+`clips_upload_gpu()` must run on the render thread (GPU upload), while file
+scanning can happen on a background thread.
+
+Possible approach:
+- Watch the media directory with `inotify` (Linux) on a background thread
+- When a new file appears, load it into CPU memory on the background thread
+- Set a flag / enqueue a pointer; the render thread picks it up next frame
+  and calls `sg_make_image()` to upload to GPU
+- New clip becomes available under the next index immediately
+
+**Question:** Should hot-added clips append to the existing index list, or
+trigger a full rescan that may renumber existing clips? Renumbering would
+break any OSC automation or Lua state that references clips by index.
+Appending is safer for live use.
+
+**Question:** Hot-removing clips (file deleted) is harder — a clip may be
+actively displayed. Safest behaviour is probably to keep the GPU texture alive
+until explicitly cleared, and log a warning.
+
+### Lua REPL and live code evaluation
+
+The `script_eval(code)` function already exists internally — it evaluates a
+Lua string in the running VM. Wiring it to an input channel enables live
+coding without restart.
+
+**Option 1 — stdin REPL:** Read lines from stdin on a background thread, queue
+them, evaluate on the render thread next frame. Works immediately with
+`netcat` or a terminal. Limitation: OSC is already the primary control
+channel, mixing stdin complicates daemonisation.
+
+**Option 2 — TCP code server:** Listen on a TCP port (e.g. 9001) for
+newline-delimited or length-prefixed Lua chunks. An editor plugin (Neovim,
+Emacs, VS Code) sends the current buffer or selection on save. Functions
+redefined this way take effect on the next `on_frame` — no restart, no
+dropped frames. This is the standard approach in live coding environments
+(Sonic Pi, Tidal, Impromptu).
+
+**Option 3 — OSC `/vj/eval s <code>`:** Send Lua as an OSC string argument.
+OSC strings are null-padded to 4-byte alignment, limiting practical chunk size
+to a few hundred bytes. Fine for one-liners, impractical for full patches.
+
+**Recommended path:** TCP server on a separate port. Implement a minimal
+length-prefixed protocol (4-byte length + UTF-8 Lua). The background thread
+reads chunks, queues them, the render thread evals each chunk once per frame.
+A simple shell helper:
+```bash
+# Send current file to running instance
+send_patch() { lua_file=$1; wc -c < "$lua_file" | xargs printf '%08x' | xxd -r -p | cat - "$lua_file" | nc localhost 9001; }
+```
+
+All three options can coexist — they all call the same `script_eval()`.
 
 ---
 
