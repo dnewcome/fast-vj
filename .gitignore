@@ -5,3 +5,4 @@ lib/stb_image.h
 lib/dr_wav.h
 *.o
 *.a
+*.avi

@@ -382,11 +382,20 @@ int video_load_avi(const char *file, VideoClip *vc) {
         return 0;
     }
 
-    /* Build frame index */
-    int ok;
-    if (idx1_ptr)
+    /* Build frame index — try idx1 first, validate JPEG magic, fall back to scan */
+    int ok = 0;
+    if (idx1_ptr) {
         ok = parse_idx1(vc, idx1_ptr, idx1_size, movi_offset);
-    else
+        /* Validate: first frame must start with JPEG SOI marker 0xFF 0xD8 */
+        if (ok && vc->num_frames > 0) {
+            const uint8_t *f0 = data + vc->offsets[0];
+            if (vc->offsets[0] + 2 > fsize || f0[0] != 0xFF || f0[1] != 0xD8) {
+                fprintf(stderr, "video: idx1 offsets invalid for %s, falling back to scan\n", file);
+                ok = 0;
+            }
+        }
+    }
+    if (!ok)
         ok = scan_movi(vc, data + movi_data, movi_size, movi_data);
 
     if (!ok || vc->num_frames == 0) {
