@@ -142,3 +142,57 @@ purposes this is indistinguishable from a real crossfade.
 - Beat-synced strobe / flash via `u_time` modulo.
 - LUT colour grading via a 1D or 3D texture.
 - Slit-scan time displacement using a ring of past frames.
+
+---
+
+## Shader uniform warnings: sokol GL_UNIFORMBLOCK_NAME_NOT_FOUND
+
+Sokol currently emits warnings like `GL_UNIFORMBLOCK_NAME_NOT_FOUND_IN_SHADER`
+and `GL_IMAGE_SAMPLER_NAME_NOT_FOUND_IN_SHADER` at startup for every shader.
+These are suppressed by a log filter in `main.c` but not actually fixed.
+
+### Root cause
+
+The standard header injected before every user shader declares `u_time` and
+`u_p[15]` as individual `uniform` variables. The GL driver's GLSL compiler
+removes any uniform that the shader body never references. When sokol then
+tries to bind `u_time` by name at runtime, it no longer exists in the compiled
+program — hence the warning. The shader still renders correctly; the bind is
+simply a no-op.
+
+### Why we can't just "put them in"
+
+By the time sokol tries to find the uniform, the GL driver has already compiled
+and linked the shader. The uniform doesn't exist in the program object. There
+is no way to add it after the fact.
+
+### Options
+
+1. **Dummy reference in each shader** — add `float _t = u_time * 0.0;` in
+   shaders that don't use time. Keeps the uniform alive through compilation.
+   Works but is boilerplate noise in every shader file.
+
+2. **Named std140 UBO (proper fix)** — restructure the injected header to use
+   a named uniform block:
+   ```glsl
+   layout(std140) uniform fs_params {
+       float u_time;
+       float u_p[15];
+   };
+   ```
+   Sokol looks up the block by name rather than individual members. As long as
+   any member is used, the block survives the optimizer. Change sokol descriptor
+   to `SG_UNIFORMLAYOUT_STD140`.
+
+   **Catch:** std140 pads every `float` array element to 16 bytes (`vec4`),
+   making `u_p[15]` consume 240 bytes instead of 60. The struct passed from C
+   must match exactly. This requires refactoring `ShaderParams` in `shaders.h`,
+   the sokol uniform block descriptor in `shaders.c`, and the GLSL header — plus
+   updating every shader that accesses `u_p`. Roughly an hour of work.
+
+3. **Suppress the warning (current approach)** — filter out log IDs 10 and 11
+   in the `vj_log` callback in `main.c`. Harmless since the warnings are
+   genuinely benign — uniforms that aren't used don't need to be bound.
+
+**TODO:** Do the std140 refactor when time allows. It's the correct fix and
+also makes the uniform layout explicit and portable across GL/GLES.

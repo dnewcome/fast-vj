@@ -35,19 +35,19 @@ void main() {
     angle = mod(angle, 2.0 * slice);
     if (angle > slice) angle = 2.0 * slice - angle;
 
-    /* Back to cartesian, apply zoom, re-center */
-    vec2 kale_uv = vec2(cos(angle), sin(angle)) * (radius / zoom) + 0.5;
+    /* Back to cartesian, apply zoom, re-center, wrap so image tiles */
+    vec2 kale_uv = fract(vec2(cos(angle), sin(angle)) * (radius / zoom) + 0.5);
 
     vec4 col = texture(image_tex, kale_uv);
 
-    /* Tint dark areas with a faint hue cycle so blank images still look good */
+    /* If no image is loaded (all black), show a colour-cycling tint instead */
     float luma = dot(col.rgb, vec3(0.299, 0.587, 0.114));
     vec3 tint = 0.5 + 0.5 * vec3(
         sin(u_time * 0.3),
         sin(u_time * 0.3 + TAU / 3.0),
         sin(u_time * 0.3 + 2.0 * TAU / 3.0)
     );
-    col.rgb = mix(tint * 0.15, col.rgb, min(luma * 2.0 + 0.3, 1.0));
+    col.rgb = mix(tint * 0.4, col.rgb, clamp(luma * 4.0, 0.0, 1.0));
 
     frag_color = vec4(col.rgb, 1.0);
 }

@@ -522,6 +522,48 @@ Install `oscsend` on Debian/Ubuntu/Raspbian:
 sudo apt install liblo-tools
 ```
 
+#### `shaders/kaleidoscope.glsl` — kaleidoscope and mirror effects
+
+Folds the image into N radial mirror segments. Works with any image or video
+clip. Falls back to a colour-cycling tint if no clip is loaded.
+
+```bash
+DISPLAY=:0 ./build/fast-vj media/ 9000 -f -s patches/osc_control.lua
+```
+
+Shaders load in alphabetical order, so `kaleidoscope` is index 1 in the
+default set (default=0, kaleidoscope=1, oscilloscope=2, plasma=3, spectrum=4).
+
+```bash
+oscsend localhost 9000 /vj/shader i 1    # switch to kaleidoscope
+
+# Load an image or video to kaleidoscope
+oscsend localhost 9000 /vj/image  i 0
+oscsend localhost 9000 /vj/video  i 0
+
+# u_p[0]  segments: number of mirror slices (2–16)
+oscsend localhost 9000 /vj/p0 f 6.0     # 6 segments (default)
+oscsend localhost 9000 /vj/p0 f 3.0     # 3 segments — more dramatic
+oscsend localhost 9000 /vj/p0 f 12.0    # 12 segments — dense mandala
+
+# u_p[1]  spin speed: rotation in radians/sec
+oscsend localhost 9000 /vj/p1 f 0.0     # static
+oscsend localhost 9000 /vj/p1 f 0.3     # slow spin
+oscsend localhost 9000 /vj/p1 f 1.5     # fast spin
+
+# u_p[2]  zoom: magnify source image before folding
+oscsend localhost 9000 /vj/p2 f 1.0     # normal
+oscsend localhost 9000 /vj/p2 f 2.0     # 2x zoom in
+
+# u_p[3]  audio react: bass pulses the zoom (0 = off, 1 = full)
+oscsend localhost 9000 /vj/p3 f 0.0     # no audio reactivity
+oscsend localhost 9000 /vj/p3 f 1.0     # zoom pulses with bass
+```
+
+To combine audio reactivity with manual OSC control, use `shader_audio.lua`
+as a base and add kaleidoscope shader selection and `u_p` overrides in
+`on_osc`.
+
 ### Live patching (future)
 
 The function `script_eval(code)` is exposed internally and can be wired to

@@ -41,6 +41,17 @@
 #include <stdio.h>
 #include <pthread.h>
 
+/* Sokol logger — suppress benign GL uniform/sampler-not-found warnings that
+   fire when the GLSL compiler optimizes away unused uniforms or samplers. */
+static void vj_log(const char *tag, uint32_t lvl, uint32_t id,
+                   const char *msg, uint32_t line, const char *file, void *ud) {
+    (void)ud;
+    /* id 10 = GL_UNIFORMBLOCK_NAME_NOT_FOUND_IN_SHADER
+       id 11 = GL_IMAGE_SAMPLER_NAME_NOT_FOUND_IN_SHADER */
+    if (id == 10 || id == 11) return;
+    slog_func(tag, lvl, id, msg, line, file, ud);
+}
+
 /* KissFFT compiled separately */
 #include "kiss_fft.h"
 #include "kiss_fftr.h"
@@ -166,7 +177,7 @@ static int         g_show_fps     = 0;
 static void init(void) {
     sg_setup(&(sg_desc){
         .environment = sglue_environment(),
-        .logger.func = slog_func,
+        .logger.func = vj_log,
     });
 
     /* ---- Shared sampler ---- */
