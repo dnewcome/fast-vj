@@ -710,18 +710,31 @@ seconds.
 ## Running
 
 ```bash
-./build/fast-vj <media-dir> [osc-port] [-s patch.lua] [-S shaders/]
+./build/fast-vj <media-dir> [osc-port] [-s patch.lua] [-S shaders/] [-m [device]] [-f] [-F]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `media-dir` | Directory to scan for audio, image, and video clips |
+| `osc-port` | UDP port for OSC input (default: 9000) |
+| `-s patch.lua` | Lua patch script to load |
+| `-S shaders/` | Alternate shader directory |
+| `-m [device]` | Mic input mode. Optional ALSA device name (default: `default`) |
+| `-f` | Show FPS counter in window title and stdout |
+| `-F` | Launch fullscreen (Escape to quit) |
 
 ```bash
 # Default OSC port 9000, shaders loaded from ./shaders/
-./build/fast-vj media/
+DISPLAY=:0 ./build/fast-vj media/
 
 # Custom port and patch
-./build/fast-vj media/ 7000 -s patches/example.lua
+DISPLAY=:0 ./build/fast-vj media/ 7000 -s patches/example.lua
 
-# Custom shaders directory
-./build/fast-vj media/ -S /path/to/my/shaders/
+# Fullscreen with mic input and audio-reactive patch
+DISPLAY=:0 ./build/fast-vj media/ 9000 -F -m -s patches/shader_audio.lua
+
+# Fullscreen with manual OSC control
+DISPLAY=:0 ./build/fast-vj media/ 9000 -F -s patches/osc_control.lua
 ```
 
 At startup, fast-vj scans the media directory and the shaders directory and
