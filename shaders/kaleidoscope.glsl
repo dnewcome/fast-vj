@@ -3,9 +3,11 @@
  * Mirrors the image into N radial segments to produce a kaleidoscope effect.
  *
  * u_p[0]  segments      number of mirror slices (2..16, default 6)
- * u_p[1]  spin speed    rotation speed in radians/sec (0 = static)
+ * u_p[1]  spin speed    rotates the segment boundaries (radians/sec)
  * u_p[2]  zoom          zoom into source image (1.0 = normal, 2.0 = 2x in)
  * u_p[3]  audio react   bass pulse on zoom (0 = off, 1 = full)
+ * u_p[4]  image rotate  rotates the source image within fixed segments (radians/sec)
+ *                       classic effect: set spin=0, image rotate > 0
  */
 
 #define PI  3.14159265358979
@@ -16,6 +18,7 @@ void main() {
     float spin      = u_p[1];
     float zoom      = u_p[2] > 0.0 ? u_p[2] : 1.0;
     float audio_amt = u_p[3];
+    float img_spin  = u_p[4];
 
     /* Bass energy for audio reactivity */
     float bass = 0.0;
@@ -37,6 +40,12 @@ void main() {
 
     /* Back to cartesian, apply zoom, re-center, wrap so image tiles */
     vec2 kale_uv = fract(vec2(cos(angle), sin(angle)) * (radius / zoom) + 0.5);
+
+    /* Rotate source image within segments — segments stay fixed, content swirls */
+    float ir = u_time * img_spin;
+    float ca = cos(ir), sa = sin(ir);
+    kale_uv = mat2(ca, -sa, sa, ca) * (kale_uv - 0.5) + 0.5;
+    kale_uv = fract(kale_uv);
 
     vec4 col = texture(image_tex, kale_uv);
 

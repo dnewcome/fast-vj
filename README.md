@@ -675,6 +675,19 @@ cmake --build build -j$(nproc)
 CMake detects `aarch64` and selects the `SOKOL_GLES3` backend automatically.
 The binary is stripped in Release mode.
 
+**Texture size limit:** The Pi 4 GPU supports a maximum texture dimension of
+4096×4096. Images larger than this will fail to upload silently and appear
+blank. fast-vj automatically detects oversized images at load time and
+downscales them to fit, printing a message like:
+
+```
+clips: resizing arnold-unsplash.jpg from 6000x4000 to 4096x2731 (GPU limit 4096)
+```
+
+For best performance, pre-scale your images to 1920×1080 or smaller before
+adding them to your media directory — this avoids the startup resize cost and
+keeps GPU memory usage low.
+
 ### Cross-compiling for Pi from Ubuntu x86-64
 
 ```bash
