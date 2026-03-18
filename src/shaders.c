@@ -67,10 +67,10 @@ static const char *s_default_body =
 /* Pipeline factory                                                   */
 /* ------------------------------------------------------------------ */
 
-static sg_pipeline make_pipeline(const char *fs_body) {
+static int make_shader_and_pipeline(const char *fs_body, sg_shader *out_shd, sg_pipeline *out_pip) {
     size_t len = strlen(GLSL_VER) + strlen(s_frag_header) + strlen(fs_body) + 1;
     char *fs_src = malloc(len);
-    if (!fs_src) return (sg_pipeline){ SG_INVALID_ID };
+    if (!fs_src) return 0;
     strcpy(fs_src, GLSL_VER);
     strcat(fs_src, s_frag_header);
     strcat(fs_src, fs_body);
@@ -112,7 +112,7 @@ static sg_pipeline make_pipeline(const char *fs_body) {
     if (sg_query_shader_state(shd) != SG_RESOURCESTATE_VALID) {
         fprintf(stderr, "shaders: shader compile failed\n");
         sg_destroy_shader(shd);
-        return (sg_pipeline){ SG_INVALID_ID };
+        return 0;
     }
 
     sg_pipeline pip = sg_make_pipeline(&(sg_pipeline_desc){
@@ -120,8 +120,10 @@ static sg_pipeline make_pipeline(const char *fs_body) {
         .index_type = SG_INDEXTYPE_UINT16,
         .layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT2,
     });
-    sg_destroy_shader(shd);
-    return pip;
+    /* Do NOT destroy shd — the pipeline references it and needs it alive. */
+    *out_shd = shd;
+    *out_pip = pip;
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -148,15 +150,13 @@ static char *read_text_file(const char *path) {
 }
 
 static void add_shader(const char *path, const char *name, const char *body) {
-    sg_pipeline pip = make_pipeline(body);
-    if (pip.id == SG_INVALID_ID) {
+    Shader *s = &g_shaders.shaders[g_shaders.num_shaders];
+    if (!make_shader_and_pipeline(body, &s->shd, &s->pip)) {
         fprintf(stderr, "shaders: failed to compile '%s'\n", name);
         return;
     }
-    Shader *s = &g_shaders.shaders[g_shaders.num_shaders];
     strncpy(s->path, path, sizeof(s->path) - 1);
     strncpy(s->name, name, sizeof(s->name) - 1);
-    s->pip = pip;
     printf("  shader[%d] %s\n", g_shaders.num_shaders, name);
     g_shaders.num_shaders++;
 }
@@ -204,7 +204,9 @@ void shaders_scan(const char *dir) {
 }
 
 void shaders_free(void) {
-    for (int i = 0; i < g_shaders.num_shaders; i++)
+    for (int i = 0; i < g_shaders.num_shaders; i++) {
         sg_destroy_pipeline(g_shaders.shaders[i].pip);
+        sg_destroy_shader(g_shaders.shaders[i].shd);
+    }
     memset(&g_shaders, 0, sizeof(g_shaders));
 }

@@ -71,6 +71,7 @@ add_executable(fast-vj
     src/video.c
     src/script.c
     src/shaders.c
+    src/mic.c
 )
 
 target_include_directories(fast-vj PRIVATE

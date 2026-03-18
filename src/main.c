@@ -31,6 +31,7 @@
 #include "video.h"
 #include "script.h"
 #include "shaders.h"
+#include "mic.h"
 
 #include "turbojpeg.h"
 #include <stdatomic.h>
@@ -153,6 +154,8 @@ static const char *g_media_dir    = ".";
 static int         g_osc_port     = 9000;
 static const char *g_script_path  = NULL;
 static const char *g_shaders_dir  = "shaders";
+static int         g_mic_mode     = 0;
+static const char *g_mic_device   = NULL;   /* NULL = "default" */
 
 static void init(void) {
     sg_setup(&(sg_desc){
@@ -238,6 +241,10 @@ static void init(void) {
         .stream_cb     = audio_cb,
         .logger.func   = slog_func,
     });
+
+    /* ---- Microphone input (optional) ---- */
+    if (g_mic_mode)
+        mic_init(g_mic_device, SAMPLE_RATE);
 
     /* ---- OSC ---- */
     osc_init(g_osc_port);
@@ -364,10 +371,14 @@ static void update_video_texture(void) {
 }
 
 static void update_audio_textures(void) {
-    if (ring_avail(&app.ring) < SAMPLES_PER_FRAME) return;
-
-    memset(app.audio_frame, 0, sizeof(app.audio_frame));
-    ring_read(&app.ring, app.audio_frame, SAMPLES_PER_FRAME);
+    if (g_mic_mode) {
+        if (mic_available() < SAMPLES_PER_FRAME) return;
+        mic_read(app.audio_frame, SAMPLES_PER_FRAME);
+    } else {
+        if (ring_avail(&app.ring) < SAMPLES_PER_FRAME) return;
+        memset(app.audio_frame, 0, sizeof(app.audio_frame));
+        ring_read(&app.ring, app.audio_frame, SAMPLES_PER_FRAME);
+    }
 
     sg_update_image(app.audio_img, &(sg_image_data){
         .mip_levels[0] = SG_RANGE(app.audio_frame),
@@ -414,6 +425,7 @@ static void frame(void) {
 
 static void cleanup(void) {
     script_shutdown();
+    if (g_mic_mode) mic_shutdown();
     osc_shutdown();
     saudio_shutdown();
     shaders_free();
@@ -439,13 +451,18 @@ sapp_desc sokol_main(int argc, char *argv[]) {
             g_script_path = argv[++i];
         else if (strcmp(argv[i], "-S") == 0 && i + 1 < argc)
             g_shaders_dir = argv[++i];
-        else if (!g_media_dir)
+        else if (strcmp(argv[i], "-m") == 0) {
+            g_mic_mode = 1;
+            /* optional device name follows: -m hw:1,0 */
+            if (i + 1 < argc && argv[i+1][0] != '-')
+                g_mic_device = argv[++i];
+        } else if (!g_media_dir)
             g_media_dir = argv[i];
         else
             g_osc_port = atoi(argv[i]);
     }
     if (!g_media_dir) {
-        fprintf(stderr, "usage: fast-vj <media-dir> [osc-port] [-s patch.lua] [-S shaders/]\n");
+        fprintf(stderr, "usage: fast-vj <media-dir> [osc-port] [-s patch.lua] [-S shaders/] [-m [device]]\n");
         exit(1);
     }
 

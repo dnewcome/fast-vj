@@ -32,6 +32,7 @@ typedef struct {
 typedef struct {
     char        path[512];
     char        name[64];
+    sg_shader   shd;   /* kept alive — pipeline references it */
     sg_pipeline pip;
 } Shader;
 
