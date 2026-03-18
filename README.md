@@ -163,6 +163,74 @@ oscsend localhost 9000 /vj/stop
 
 ---
 
+## GLSL shaders
+
+Fragment shaders live in `shaders/*.glsl`. Each file is just a `void main()`
+body — the engine injects a standard header so you don't repeat boilerplate.
+Shaders are loaded at startup (or from an alternate directory with `-S`).
+
+### Standard header (injected automatically)
+
+Every shader has access to:
+
+```glsl
+uniform sampler2D image_tex;  // current image or video frame (RGBA8)
+uniform sampler2D audio_tex;  // waveform   — 1D R32F, 2048 wide, range ~[-1,1]
+uniform sampler2D fft_tex;    // FFT mag    — 1D R32F, 2048 wide, range [0,1]
+in  vec2 uv;                  // fragment UV, (0,0) bottom-left, (1,1) top-right
+out vec4 frag_color;
+
+uniform float u_time;         // elapsed seconds since startup
+uniform float u_p[15];        // user parameters — set via vj.uniform(i, v)
+```
+
+### Writing a shader
+
+Create any `.glsl` file in `shaders/`. The file provides only `void main()`:
+
+```glsl
+// shaders/myeffect.glsl
+void main() {
+    float bass = texture(fft_tex, vec2(0.01, 0.5)).r;
+    float wave = texture(audio_tex, vec2(uv.x, 0.5)).r;
+
+    vec3 col = vec3(
+        sin(uv.x * 10.0 + u_time * (1.0 + bass * 4.0)),
+        wave * 0.5 + 0.5,
+        uv.y
+    ) * 0.5 + 0.5;
+
+    frag_color = vec4(col, 1.0);
+}
+```
+
+### Included shaders
+
+| File | Description | Key params |
+|------|-------------|------------|
+| `default.glsl` | Waveform oscilloscope + FFT bars + image layer | — |
+| `spectrum.glsl` | Full-screen colorful FFT spectrum with peak dots | `u_p[0]` brightness |
+| `oscilloscope.glsl` | Glowing waveform over image | `u_p[0]` glow, `u_p[1]` amp, `u_p[2]` image blend |
+| `plasma.glsl` | Audio-reactive sine plasma | `u_p[0]` speed, `u_p[1]` image blend |
+
+### Using shaders from a Lua patch
+
+```lua
+-- Switch to shader by index (alphabetical load order)
+vj.shader(2)
+
+-- Set u_p[0] on the current shader
+vj.uniform(0, 1.5)
+
+-- Animate a parameter from audio each frame
+function on_frame(dt)
+    local bass = vj.fft(3) + vj.fft(4) + vj.fft(5)
+    vj.uniform(0, bass / 3.0)   -- drive u_p[0] with bass energy
+end
+```
+
+---
+
 ## Lua scripting
 
 fast-vj embeds [LuaJIT](https://luajit.org/) (falling back to Lua 5.4 if
@@ -245,6 +313,40 @@ Useful ranges:
 | `vj.num_image()` | `int` | Number of loaded image clips. |
 | `vj.num_video()` | `int` | Number of loaded video clips. |
 
+#### Shaders
+
+| Function | Description |
+|----------|-------------|
+| `vj.shader(i)` | Switch to shader `i`. `i` is the index printed at startup (alphabetical). |
+| `vj.num_shaders()` | Number of loaded shaders. |
+| `vj.uniform(i, v)` | Set shader parameter `u_p[i]` to float `v`. `i`: 0–14. Takes effect next frame. |
+
+#### Image pixel access
+
+CPU copies of image pixels are kept after GPU upload, enabling per-pixel reads
+from Lua (useful for driving audio or visual parameters from image content).
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `vj.image_pixel(clip, x, y)` | `r, g, b, a` floats 0–1 | RGBA pixel at `(x, y)` in image clip `clip`. Returns `nil` if out of bounds. |
+| `vj.image_width(clip)` | `int` | Width in pixels of image clip `clip`. |
+| `vj.image_height(clip)` | `int` | Height in pixels of image clip `clip`. |
+
+`vj.image_pixel` returns four values. Unpack them with:
+
+```lua
+local r, g, b, a = vj.image_pixel(0, 100, 50)
+
+-- Scan a row for luminance and use it as an audio gain envelope
+local w = vj.image_width(0)
+local luma = 0
+for x = 0, w - 1 do
+    local r, g, b = vj.image_pixel(0, x, 100)
+    luma = luma + r * 0.299 + g * 0.587 + b * 0.114
+end
+vj.gain(luma / w)
+```
+
 #### Utilities
 
 | Function | Description |
@@ -304,6 +406,39 @@ function on_frame(dt)
         if s > peak then peak = s end
     end
     vj.gain(0.2 + peak * 0.8)
+end
+```
+
+#### Drive shader parameters from audio
+
+```lua
+function on_frame(dt)
+    -- Bass drives plasma speed (u_p[0])
+    local bass = 0
+    for i = 1, 8 do bass = bass + vj.fft(i) end
+    vj.uniform(0, 0.5 + bass / 8 * 3.0)
+
+    -- Treble drives image blend (u_p[1])
+    local treble = 0
+    for i = 200, 400 do treble = treble + vj.fft(i) end
+    vj.uniform(1, treble / 200)
+end
+```
+
+#### Scanline luminance as gain envelope
+
+```lua
+function on_frame(dt)
+    local w = vj.image_width(0)
+    if w == 0 then return end
+    -- Sample middle row of image[0], use luminance as gain
+    local y = math.floor(vj.image_height(0) / 2)
+    local luma = 0
+    for x = 0, w - 1 do
+        local r, g, b = vj.image_pixel(0, x, y)
+        luma = luma + r * 0.299 + g * 0.587 + b * 0.114
+    end
+    vj.gain(luma / w)
 end
 ```
 
@@ -421,29 +556,35 @@ seconds.
 ## Running
 
 ```bash
-./build/fast-vj <media-directory> [osc-port] [-s patch.lua]
+./build/fast-vj <media-dir> [osc-port] [-s patch.lua] [-S shaders/]
 ```
 
 ```bash
-# Default OSC port 9000, no script
+# Default OSC port 9000, shaders loaded from ./shaders/
 ./build/fast-vj media/
 
-# Custom port
-./build/fast-vj media/ 7000
+# Custom port and patch
+./build/fast-vj media/ 7000 -s patches/example.lua
 
-# Load a Lua patch at startup
-./build/fast-vj media/ 9000 -s patches/example.lua
+# Custom shaders directory
+./build/fast-vj media/ -S /path/to/my/shaders/
 ```
 
-At startup, fast-vj scans the media directory and prints the index of every
-loaded clip:
+At startup, fast-vj scans the media directory and the shaders directory and
+prints the index of everything loaded:
 
 ```
-audio[0] drums  (4.2s)
-audio[1] bass   (2.1s)
-image[0] logo   (1920x1080)
-video[0] intro  120 frames  1920x1080  30.0fps
-video[1] loop   300 frames  1920x1080  30.0fps  (mmap)
+Scanning media/ ...
+  audio[0] drums  (4.2s)
+  audio[1] bass   (2.1s)
+  image[0] logo   (1920x1080)
+  video[0] intro  120 frames  1920x1080  30.0fps
+  video[1] loop   300 frames  1920x1080  30.0fps  (mmap)
+Loading shaders from shaders/ ...
+  shader[0] default
+  shader[1] spectrum
+  shader[2] oscilloscope
+  shader[3] plasma
 osc: listening on UDP port 9000
 ```
 
@@ -482,12 +623,18 @@ automatically.
 ```
 fast-vj/
   src/
-    main.c          — app loop, audio callback, shader, OSC polling
-    clips.c / .h    — media directory scanner, GPU upload
+    main.c          — app loop, audio callback, OSC polling, render
+    clips.c / .h    — media directory scanner, GPU upload, CPU pixel store
     osc.c / .h      — OSC UDP listener (background thread)
     video.c / .h    — JPEG directory and MJPEG AVI loader/decoder
+    shaders.c / .h  — shader file loader, pipeline factory, uniform block
     script.c / .h   — LuaJIT VM, vj.* API, on_frame/on_osc dispatch
     sokol_impl.c    — single translation unit that defines SOKOL_IMPL
+  shaders/          — GLSL fragment shader library
+    default.glsl    — waveform + FFT bars + image
+    spectrum.glsl   — colorful full-screen spectrum
+    oscilloscope.glsl — glowing waveform over image
+    plasma.glsl     — audio-reactive sine plasma
   patches/          — Lua patch scripts
     example.lua
   lib/              — populated by fetch_deps.sh (git-ignored)
@@ -507,11 +654,9 @@ fast-vj/
 
 - **Live patch reload** — TCP or OSC listener that calls `script_eval()` to
   redefine `on_frame`/`on_osc` in the running VM without restarting
-- **Shader hot-reload** — watch `.glsl` files, recompile on save; expose
-  uniform values to Lua so patches can drive shader parameters directly
-- **Image scanline → Lua** — expose pixel row reads so a patch can sample
-  image luminance as an envelope without a round-trip through the GPU
+- **Shader hot-reload** — watch `.glsl` files, recompile on change with no
+  restart; makes writing new shaders much faster
 - **Multi-pass rendering** — render to offscreen texture, chain transforms;
-  expose render target handles to Lua
+  expose render target handles to Lua (`vj.render_to(target)`)
 - **SVG paths** — parse with nanosvg, render as line strip geometry
-- **MIDI input** — map controller values to Lua globals
+- **MIDI input** — map controller values to `vj.uniform()` or Lua globals

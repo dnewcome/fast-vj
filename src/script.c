@@ -9,6 +9,7 @@
 #include "script.h"
 #include "osc.h"
 #include "clips.h"
+#include "shaders.h"
 
 #include <lua.h>
 #include <lualib.h>
@@ -91,6 +92,63 @@ static int l_vj_print(lua_State *l) {
     return 0;
 }
 
+/* ---- Shader control ---- */
+
+static int l_vj_shader(lua_State *l) {
+    int idx = (int)luaL_checkinteger(l, 1);
+    if (idx >= 0 && idx < g_shaders.num_shaders)
+        g_current_shader = idx;
+    return 0;
+}
+
+static int l_vj_num_shaders(lua_State *l) {
+    lua_pushinteger(l, g_shaders.num_shaders);
+    return 1;
+}
+
+static int l_vj_uniform(lua_State *l) {
+    int   idx = (int)luaL_checkinteger(l, 1);
+    float val = (float)luaL_checknumber(l, 2);
+    if (idx >= 0 && idx < SHADER_PARAMS_COUNT)
+        g_shader_params.p[idx] = val;
+    return 0;
+}
+
+/* ---- Image pixel access ---- */
+
+static int l_vj_image_pixel(lua_State *l) {
+    int clip = (int)luaL_checkinteger(l, 1);
+    int x    = (int)luaL_checkinteger(l, 2);
+    int y    = (int)luaL_checkinteger(l, 3);
+    if (clip < 0 || clip >= g_clips.num_image) {
+        lua_pushnil(l); return 1;
+    }
+    ImageClip *c = &g_clips.image[clip];
+    if (!c->pixels || x < 0 || x >= c->width || y < 0 || y >= c->height) {
+        lua_pushnil(l); return 1;
+    }
+    int base = (y * c->width + x) * 4;
+    lua_pushnumber(l, c->pixels[base + 0] / 255.0f);
+    lua_pushnumber(l, c->pixels[base + 1] / 255.0f);
+    lua_pushnumber(l, c->pixels[base + 2] / 255.0f);
+    lua_pushnumber(l, c->pixels[base + 3] / 255.0f);
+    return 4;
+}
+
+static int l_vj_image_width(lua_State *l) {
+    int clip = (int)luaL_checkinteger(l, 1);
+    lua_pushinteger(l,
+        (clip >= 0 && clip < g_clips.num_image) ? g_clips.image[clip].width : 0);
+    return 1;
+}
+
+static int l_vj_image_height(lua_State *l) {
+    int clip = (int)luaL_checkinteger(l, 1);
+    lua_pushinteger(l,
+        (clip >= 0 && clip < g_clips.num_image) ? g_clips.image[clip].height : 0);
+    return 1;
+}
+
 static const luaL_Reg s_vj_funcs[] = {
     { "audio",     l_vj_audio     },
     { "image",     l_vj_image     },
@@ -99,11 +157,17 @@ static const luaL_Reg s_vj_funcs[] = {
     { "stop",      l_vj_stop      },
     { "sample",    l_vj_sample    },
     { "fft",       l_vj_fft       },
-    { "num_audio", l_vj_num_audio },
-    { "num_image", l_vj_num_image },
-    { "num_video", l_vj_num_video },
-    { "print",     l_vj_print     },
-    { NULL,        NULL           }
+    { "num_audio",    l_vj_num_audio    },
+    { "num_image",    l_vj_num_image    },
+    { "num_video",    l_vj_num_video    },
+    { "print",        l_vj_print        },
+    { "shader",       l_vj_shader       },
+    { "num_shaders",  l_vj_num_shaders  },
+    { "uniform",      l_vj_uniform      },
+    { "image_pixel",  l_vj_image_pixel  },
+    { "image_width",  l_vj_image_width  },
+    { "image_height", l_vj_image_height },
+    { NULL,           NULL              }
 };
 
 /* ------------------------------------------------------------------ */

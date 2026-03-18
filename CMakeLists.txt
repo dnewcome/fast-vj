@@ -70,6 +70,7 @@ add_executable(fast-vj
     src/osc.c
     src/video.c
     src/script.c
+    src/shaders.c
 )
 
 target_include_directories(fast-vj PRIVATE

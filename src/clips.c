@@ -209,7 +209,7 @@ void clips_upload_gpu(ClipList *cl, sg_sampler smp) {
             .texture.image = c->gpu_img,
         });
 
-        stbi_image_free(px);
+        c->pixels  = px;   /* keep CPU copy for vj.image_pixel() */
         s_pixels[i] = NULL;
     }
     (void)smp; /* reserved for custom sampler per clip in future */
@@ -237,6 +237,8 @@ void clips_print(const ClipList *cl) {
 void clips_free(ClipList *cl) {
     for (int i = 0; i < cl->num_audio; i++)
         free(cl->audio[i].samples);
+    for (int i = 0; i < cl->num_image; i++)
+        if (cl->image[i].pixels) stbi_image_free(cl->image[i].pixels);
     for (int i = 0; i < cl->num_video; i++)
         video_unload(&cl->video[i]);
     memset(cl, 0, sizeof(*cl));

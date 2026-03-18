@@ -30,6 +30,7 @@
 #include "osc.h"
 #include "video.h"
 #include "script.h"
+#include "shaders.h"
 
 #include "turbojpeg.h"
 #include <stdatomic.h>
@@ -74,7 +75,6 @@ static void ring_read (RingBuf *r, float *dst, int n) {
 
 static struct {
     /* render resources */
-    sg_pipeline     pip;
     sg_bindings     bind;
     sg_pass_action  pass_action;
     sg_image        audio_img;
@@ -114,55 +114,8 @@ static struct {
 
 ClipList g_clips;
 
-/* ------------------------------------------------------------------ */
-/* GLSL shaders                                                        */
-/* ------------------------------------------------------------------ */
-
-#if defined(SOKOL_GLES3)
-  #define GLSL_VER "#version 300 es\nprecision mediump float;\n"
-#else
-  #define GLSL_VER "#version 330\n"
-#endif
-
-static const char *vs_src =
-    GLSL_VER
-    "in vec2 pos;\n"
-    "out vec2 uv;\n"
-    "void main() {\n"
-    "    gl_Position = vec4(pos, 0.0, 1.0);\n"
-    "    uv = pos * 0.5 + 0.5;\n"
-    "}\n";
-
-/*
- * Fragment shader:
- *  - image_tex: current image clip (RGBA). Default is 1×1 transparent.
- *  - audio_tex: waveform (1D R32F, range ~[-1,1])
- *  - fft_tex:   spectrum (1D R32F, log magnitude [0,1])
- *
- * The image is drawn first; waveform and FFT bars are added on top.
- * When no image is loaded the dark background shows through.
- */
-static const char *fs_src =
-    GLSL_VER
-    "uniform sampler2D image_tex;\n"
-    "uniform sampler2D audio_tex;\n"
-    "uniform sampler2D fft_tex;\n"
-    "in vec2 uv;\n"
-    "out vec4 frag_color;\n"
-    "const float LINE_W = 0.004;\n"
-    "void main() {\n"
-    "    vec4 img = texture(image_tex, uv);\n"
-    "    vec3 bg  = vec3(0.05, 0.05, 0.1);\n"
-    "    vec3 col = mix(bg, img.rgb, img.a);\n"
-    /* waveform */
-    "    float s  = texture(audio_tex, vec2(uv.x, 0.5)).r;\n"
-    "    float wl = smoothstep(LINE_W, 0.0, abs(uv.y - (s*0.4+0.5)));\n"
-    "    col += vec3(0.2, 0.9, 0.4) * wl;\n"
-    /* FFT bars */
-    "    float mag = texture(fft_tex, vec2(uv.x, 0.5)).r;\n"
-    "    col += vec3(0.7, 0.2, 0.1) * step(uv.y, mag * 0.3) * 0.35;\n"
-    "    frag_color = vec4(col, 1.0);\n"
-    "}\n";
+/* Shaders are loaded from g_shaders_dir by shaders_scan() in init().
+ * See shaders.h for the standard uniforms available in every shader. */
 
 /* ------------------------------------------------------------------ */
 /* Audio callback — runs on audio thread                               */
@@ -196,9 +149,10 @@ static void audio_cb(float *buf, int num_frames, int num_channels) {
 /* Init                                                                */
 /* ------------------------------------------------------------------ */
 
-static const char *g_media_dir   = ".";
-static int         g_osc_port    = 9000;
-static const char *g_script_path = NULL;
+static const char *g_media_dir    = ".";
+static int         g_osc_port     = 9000;
+static const char *g_script_path  = NULL;
+static const char *g_shaders_dir  = "shaders";
 
 static void init(void) {
     sg_setup(&(sg_desc){
@@ -246,39 +200,9 @@ static void init(void) {
     /* ---- Upload image clips to GPU ---- */
     clips_upload_gpu(&g_clips, app.smp);
 
-    /* ---- Shader ----
-     * views[0] = image_tex  (2D RGBA8)
-     * views[1] = audio_tex  (1D R32F)
-     * views[2] = fft_tex    (1D R32F)
-     * samplers[0] shared by all three
-     */
-    sg_shader shd = sg_make_shader(&(sg_shader_desc){
-        .vertex_func.source   = vs_src,
-        .fragment_func.source = fs_src,
-        .views[0].texture = { .stage = SG_SHADERSTAGE_FRAGMENT,
-                               .image_type  = SG_IMAGETYPE_2D,
-                               .sample_type = SG_IMAGESAMPLETYPE_FLOAT },
-        .views[1].texture = { .stage = SG_SHADERSTAGE_FRAGMENT,
-                               .image_type  = SG_IMAGETYPE_2D,
-                               .sample_type = SG_IMAGESAMPLETYPE_FLOAT },
-        .views[2].texture = { .stage = SG_SHADERSTAGE_FRAGMENT,
-                               .image_type  = SG_IMAGETYPE_2D,
-                               .sample_type = SG_IMAGESAMPLETYPE_FLOAT },
-        .samplers[0] = { .stage = SG_SHADERSTAGE_FRAGMENT,
-                         .sampler_type = SG_SAMPLERTYPE_FILTERING },
-        .texture_sampler_pairs[0] = { .stage = SG_SHADERSTAGE_FRAGMENT,
-            .view_slot = 0, .sampler_slot = 0, .glsl_name = "image_tex" },
-        .texture_sampler_pairs[1] = { .stage = SG_SHADERSTAGE_FRAGMENT,
-            .view_slot = 1, .sampler_slot = 0, .glsl_name = "audio_tex" },
-        .texture_sampler_pairs[2] = { .stage = SG_SHADERSTAGE_FRAGMENT,
-            .view_slot = 2, .sampler_slot = 0, .glsl_name = "fft_tex" },
-    });
-
-    app.pip = sg_make_pipeline(&(sg_pipeline_desc){
-        .shader     = shd,
-        .index_type = SG_INDEXTYPE_UINT16,
-        .layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT2,
-    });
+    /* ---- Load shaders from disk ---- */
+    printf("Loading shaders from %s ...\n", g_shaders_dir);
+    shaders_scan(g_shaders_dir);
 
     app.bind = (sg_bindings){
         .vertex_buffers[0] = vbuf,
@@ -469,6 +393,8 @@ static void update_audio_textures(void) {
 
 static void frame(void) {
     app.time += (float)sapp_frame_duration();
+    g_shader_params.time = app.time;
+
     poll_osc();
     update_video_texture();
     update_audio_textures();
@@ -478,8 +404,9 @@ static void frame(void) {
         .action    = app.pass_action,
         .swapchain = sglue_swapchain(),
     });
-    sg_apply_pipeline(app.pip);
+    sg_apply_pipeline(g_shaders.shaders[g_current_shader].pip);
     sg_apply_bindings(&app.bind);
+    sg_apply_uniforms(0, &SG_RANGE(g_shader_params));
     sg_draw(0, 6, 1);
     sg_end_pass();
     sg_commit();
@@ -489,6 +416,7 @@ static void cleanup(void) {
     script_shutdown();
     osc_shutdown();
     saudio_shutdown();
+    shaders_free();
     sg_shutdown();
     kiss_fftr_free(app.fft_cfg);
     if (app.tj) tjDestroy(app.tj);
@@ -509,13 +437,15 @@ sapp_desc sokol_main(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc)
             g_script_path = argv[++i];
+        else if (strcmp(argv[i], "-S") == 0 && i + 1 < argc)
+            g_shaders_dir = argv[++i];
         else if (!g_media_dir)
             g_media_dir = argv[i];
         else
             g_osc_port = atoi(argv[i]);
     }
     if (!g_media_dir) {
-        fprintf(stderr, "usage: fast-vj <media-dir> [osc-port] [-s script.lua]\n");
+        fprintf(stderr, "usage: fast-vj <media-dir> [osc-port] [-s patch.lua] [-S shaders/]\n");
         exit(1);
     }
 

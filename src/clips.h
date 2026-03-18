@@ -43,6 +43,7 @@ typedef struct {
     int         width, height;
     sg_image    gpu_img;
     sg_view     gpu_view;
+    uint8_t    *pixels;  /* RGBA8 CPU copy kept after GPU upload (w*h*4 bytes) */
 } ImageClip;
 
 typedef struct {
