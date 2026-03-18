@@ -29,6 +29,7 @@
 #include "clips.h"
 #include "osc.h"
 #include "video.h"
+#include "script.h"
 
 #include "turbojpeg.h"
 #include <stdatomic.h>
@@ -111,7 +112,7 @@ static struct {
     float           time;
 } app;
 
-static ClipList g_clips;
+ClipList g_clips;
 
 /* ------------------------------------------------------------------ */
 /* GLSL shaders                                                        */
@@ -195,8 +196,9 @@ static void audio_cb(float *buf, int num_frames, int num_channels) {
 /* Init                                                                */
 /* ------------------------------------------------------------------ */
 
-static const char *g_media_dir = ".";
-static int         g_osc_port  = 9000;
+static const char *g_media_dir   = ".";
+static int         g_osc_port    = 9000;
+static const char *g_script_path = NULL;
 
 static void init(void) {
     sg_setup(&(sg_desc){
@@ -316,6 +318,11 @@ static void init(void) {
     /* ---- OSC ---- */
     osc_init(g_osc_port);
 
+    /* ---- Lua scripting ---- */
+    script_init(app.audio_frame, app.fft_mag, AUDIO_TEX_WIDTH);
+    if (g_script_path)
+        script_load(g_script_path);
+
     printf("\nReady. Send OSC to UDP port %d:\n", g_osc_port);
     printf("  /vj/audio <int>   play audio clip\n");
     printf("  /vj/image <int>   show image clip  (-1 = blank)\n");
@@ -336,12 +343,14 @@ static void poll_osc(void) {
         atomic_store_explicit(&app.audio_cursor,   0,       memory_order_release);
         atomic_store_explicit(&app.current_audio,  req_aud, memory_order_release);
         printf("playing audio[%d] %s\n", req_aud, g_clips.audio[req_aud].name);
+        script_call_osc("/vj/audio", 'i', req_aud, 0);
     }
 
     /* Stop */
     if (atomic_exchange_explicit(&g_osc.stop_audio, 0, memory_order_acq_rel)) {
         atomic_store_explicit(&app.current_audio, -1, memory_order_release);
         printf("audio stopped\n");
+        script_call_osc("/vj/stop", 0, 0, 0);
     }
 
     /* Image clip trigger */
@@ -357,6 +366,7 @@ static void poll_osc(void) {
             app.bind.views[0] = app.blank_view;
             printf("image cleared\n");
         }
+        script_call_osc("/vj/image", 'i', req_img, 0);
     }
 
     /* Video clip trigger */
@@ -374,6 +384,7 @@ static void poll_osc(void) {
             app.bind.views[0] = app.blank_view;
             printf("video stopped\n");
         }
+        script_call_osc("/vj/video", 'i', req_vid, 0);
     }
 }
 
@@ -461,6 +472,7 @@ static void frame(void) {
     poll_osc();
     update_video_texture();
     update_audio_textures();
+    script_call_frame(sapp_frame_duration());
 
     sg_begin_pass(&(sg_pass){
         .action    = app.pass_action,
@@ -474,6 +486,7 @@ static void frame(void) {
 }
 
 static void cleanup(void) {
+    script_shutdown();
     osc_shutdown();
     saudio_shutdown();
     sg_shutdown();
@@ -493,13 +506,18 @@ static void event(const sapp_event *e) {
 /* ------------------------------------------------------------------ */
 
 sapp_desc sokol_main(int argc, char *argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "usage: fast-vj <media-dir> [osc-port]\n");
-        fprintf(stderr, "  osc-port defaults to 9000\n");
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-s") == 0 && i + 1 < argc)
+            g_script_path = argv[++i];
+        else if (!g_media_dir)
+            g_media_dir = argv[i];
+        else
+            g_osc_port = atoi(argv[i]);
+    }
+    if (!g_media_dir) {
+        fprintf(stderr, "usage: fast-vj <media-dir> [osc-port] [-s script.lua]\n");
         exit(1);
     }
-    g_media_dir = argv[1];
-    if (argc >= 3) g_osc_port = atoi(argv[2]);
 
     /* Scan media directory before the window opens */
     printf("Scanning %s ...\n", g_media_dir);

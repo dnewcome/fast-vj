@@ -71,3 +71,6 @@ void clips_free(ClipList *cl);
 
 /* Returns 1 if the named directory contains at least one JPEG. */
 int dir_has_jpegs(const char *dir);
+
+/* Global clip list — defined in main.c, accessible to script.c. */
+extern ClipList g_clips;

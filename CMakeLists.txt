@@ -14,6 +14,20 @@ endif()
 
 # ---- Find system libraries ----
 find_package(Threads REQUIRED)
+find_package(PkgConfig REQUIRED)
+
+# ---- LuaJIT (fallback to Lua 5.4) ----
+pkg_check_modules(LUAJIT luajit)
+if(LUAJIT_FOUND)
+    message(STATUS "LuaJIT: ${LUAJIT_VERSION}")
+    set(LUA_INCLUDE_DIRS ${LUAJIT_INCLUDE_DIRS})
+    set(LUA_LINK_LIBS    ${LUAJIT_LIBRARIES})
+else()
+    find_package(Lua 5.4 REQUIRED)
+    message(STATUS "LuaJIT not found — using Lua ${LUA_VERSION_STRING}")
+    set(LUA_INCLUDE_DIRS ${LUA_INCLUDE_DIR})
+    set(LUA_LINK_LIBS    ${LUA_LIBRARIES})
+endif()
 
 if(TARGET_PI)
     # Pi: OpenGL ES 3 via Mesa, EGL for context creation
@@ -55,11 +69,13 @@ add_executable(fast-vj
     src/clips.c
     src/osc.c
     src/video.c
+    src/script.c
 )
 
 target_include_directories(fast-vj PRIVATE
     lib/sokol
     lib
+    ${LUA_INCLUDE_DIRS}
 )
 
 target_link_libraries(fast-vj PRIVATE
@@ -67,6 +83,7 @@ target_link_libraries(fast-vj PRIVATE
     tinyosc
     ${GL_LIBS}
     ${TURBOJPEG_LIB}
+    ${LUA_LINK_LIBS}
     Threads::Threads
     m       # math
     dl      # dlopen (sokol needs it on Linux)

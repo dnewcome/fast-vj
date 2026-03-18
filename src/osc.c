@@ -27,11 +27,13 @@ static atomic_int s_running;
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-static void store_gain(float f) {
+void osc_set_gain(float f) {
     int bits;
     __builtin_memcpy(&bits, &f, sizeof(bits));
     atomic_store_explicit(&g_osc.gain_bits, bits, memory_order_relaxed);
 }
+
+static void store_gain(float f) { osc_set_gain(f); }
 
 static void dispatch(tosc_message *msg) {
     const char *addr = tosc_getAddress(msg);

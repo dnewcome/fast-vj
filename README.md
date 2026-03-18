@@ -163,6 +163,164 @@ oscsend localhost 9000 /vj/stop
 
 ---
 
+## Lua scripting
+
+fast-vj embeds [LuaJIT](https://luajit.org/) (falling back to Lua 5.4 if
+LuaJIT is not installed). A patch is a plain `.lua` file loaded at startup
+with `-s patch.lua`. The script runs on the render thread — all `vj.*` calls
+are safe from within any callback.
+
+### Loading a patch
+
+```bash
+./build/fast-vj media/ 9000 -s patches/example.lua
+```
+
+The script is executed once at load time (top-level code runs immediately),
+then the engine calls `on_frame` and `on_osc` every frame/event if those
+functions are defined.
+
+### Callbacks
+
+```lua
+-- Called every render frame.
+-- dt: seconds elapsed since the previous frame (~0.033 at 30fps)
+function on_frame(dt)
+end
+
+-- Called once for each OSC event that the engine processes.
+-- addr: OSC address string e.g. "/vj/audio"
+-- arg:  integer or float argument, or nil if the message had no argument
+function on_osc(addr, arg)
+end
+```
+
+Both callbacks are optional. If neither is defined the patch can still use
+top-level code to set an initial state.
+
+### vj.* API reference
+
+#### Playback triggers
+
+| Function | Description |
+|----------|-------------|
+| `vj.audio(i)` | Start audio clip `i` (loops). `i` is the clip index printed at startup. |
+| `vj.image(i)` | Show image clip `i`. Pass `-1` to clear to blank. |
+| `vj.video(i)` | Play video clip `i` from frame 0. Pass `-1` to stop. |
+| `vj.gain(f)` | Set master audio gain. `f` is a float, typically `0.0`–`1.0`. |
+| `vj.stop()` | Stop audio playback. |
+
+Trigger calls made from `on_frame` take effect on the next frame (they write
+to the same atomic queue as incoming OSC messages). At 30fps that is ~33ms —
+imperceptible for live VJ work.
+
+#### Audio data
+
+The audio texture is a ring buffer of the most recent samples from the
+playing audio clip, updated once per render frame. The FFT magnitude texture
+is computed from the same window.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `vj.sample(i)` | `float` ~[-1, 1] | Raw audio sample at index `i`. `i`: 0–2047. |
+| `vj.fft(i)` | `float` [0, 1] | Log-magnitude FFT bin at index `i`. `i`: 0–2047. Bin 0 is DC; bin 1 is ~21 Hz at 44100 Hz / 2048. |
+
+FFT bin to frequency: `freq = i * sample_rate / fft_size = i * 44100 / 2048 ≈ i * 21.5 Hz`
+
+Useful ranges:
+
+| Band | Bin range | `vj.fft(i)` loop |
+|------|-----------|-----------------|
+| Sub-bass (20–60 Hz) | 1–3 | `for i = 1, 3` |
+| Bass (60–250 Hz) | 3–12 | `for i = 3, 12` |
+| Midrange (250 Hz–2 kHz) | 12–93 | `for i = 12, 93` |
+| Presence (2–6 kHz) | 93–279 | `for i = 93, 279` |
+| Brilliance (6–20 kHz) | 279–930 | `for i = 279, 930` |
+
+#### Clip counts
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `vj.num_audio()` | `int` | Number of loaded audio clips. |
+| `vj.num_image()` | `int` | Number of loaded image clips. |
+| `vj.num_video()` | `int` | Number of loaded video clips. |
+
+#### Utilities
+
+| Function | Description |
+|----------|-------------|
+| `vj.print(s)` | Print string to stdout with a `[lua]` prefix. |
+
+### Example patches
+
+#### React to OSC and cycle clips
+
+```lua
+function on_osc(addr, arg)
+    if addr == "/vj/audio" then
+        -- mirror audio trigger to a matching video
+        vj.video(arg % vj.num_video())
+    end
+end
+```
+
+#### Bass-reactive auto-cut
+
+```lua
+local cooldown = 0
+
+function on_frame(dt)
+    cooldown = cooldown - dt
+
+    local bass = 0
+    for i = 1, 8 do bass = bass + vj.fft(i) end
+    bass = bass / 8
+
+    if bass > 0.65 and cooldown <= 0 then
+        vj.video(math.random(0, vj.num_video() - 1))
+        cooldown = 2.0
+    end
+end
+```
+
+#### Use audio peak as gain envelope
+
+```lua
+function on_frame(dt)
+    local peak = 0
+    for i = 0, 63 do
+        local s = math.abs(vj.sample(i))
+        if s > peak then peak = s end
+    end
+    vj.gain(0.2 + peak * 0.8)
+end
+```
+
+#### Cycle images on a beat (simple threshold detector)
+
+```lua
+local prev_bass = 0
+local image_idx = 0
+
+function on_frame(dt)
+    local bass = vj.fft(3) + vj.fft(4) + vj.fft(5)
+    if bass > 0.5 and prev_bass <= 0.5 then   -- rising edge
+        image_idx = (image_idx + 1) % vj.num_image()
+        vj.image(image_idx)
+    end
+    prev_bass = bass
+end
+```
+
+### Live patching (future)
+
+The function `script_eval(code)` is exposed internally and can be wired to
+a TCP listener or special OSC address, allowing you to send Lua code strings
+to the running VM. Functions redefined this way take effect immediately on
+the next frame — no restart required.
+
+---
+
 ## Dependencies
 
 All C dependencies are header-only or small static libraries. `fetch_deps.sh`
@@ -184,6 +342,7 @@ System libraries required:
 | ALSA | `libasound2-dev` | Audio output |
 | X11 | `libx11-dev libxi-dev libxcursor-dev` | Desktop only |
 | libjpeg-turbo | `libturbojpeg0-dev` | JPEG video decode |
+| LuaJIT | `libluajit-5.1-dev` | Scripting VM (Lua 5.4 used if absent) |
 
 ---
 
@@ -194,7 +353,7 @@ System libraries required:
 ```bash
 sudo apt install build-essential cmake git \
     libgl-dev libx11-dev libxi-dev libxcursor-dev \
-    libasound2-dev libturbojpeg0-dev
+    libasound2-dev libturbojpeg0-dev libluajit-5.1-dev
 ```
 
 ```bash
@@ -217,7 +376,7 @@ If you see `llvmpipe`, enable the driver via `raspi-config` → Advanced Options
 ```bash
 sudo apt install build-essential cmake git \
     libgles2-mesa-dev libegl-mesa0 libegl1-mesa-dev \
-    libasound2-dev libturbojpeg0-dev
+    libasound2-dev libturbojpeg0-dev libluajit-5.1-dev
 ```
 
 ```bash
@@ -251,15 +410,18 @@ seconds.
 ## Running
 
 ```bash
-./build/fast-vj <media-directory> [osc-port]
+./build/fast-vj <media-directory> [osc-port] [-s patch.lua]
 ```
 
 ```bash
-# Default OSC port 9000
+# Default OSC port 9000, no script
 ./build/fast-vj media/
 
 # Custom port
 ./build/fast-vj media/ 7000
+
+# Load a Lua patch at startup
+./build/fast-vj media/ 9000 -s patches/example.lua
 ```
 
 At startup, fast-vj scans the media directory and prints the index of every
@@ -313,7 +475,10 @@ fast-vj/
     clips.c / .h    — media directory scanner, GPU upload
     osc.c / .h      — OSC UDP listener (background thread)
     video.c / .h    — JPEG directory and MJPEG AVI loader/decoder
+    script.c / .h   — LuaJIT VM, vj.* API, on_frame/on_osc dispatch
     sokol_impl.c    — single translation unit that defines SOKOL_IMPL
+  patches/          — Lua patch scripts
+    example.lua
   lib/              — populated by fetch_deps.sh (git-ignored)
     sokol/
     kissfft/
@@ -329,11 +494,13 @@ fast-vj/
 
 ## Roadmap
 
-- **Image scanline as audio envelope** — read a row of pixels each frame,
-  treat luminance as a float signal, apply as amplitude multiplier or LFO
-- **FFT magnitude → visual parameter** — drive color, scale, or position from
-  spectral energy bands
-- **Shader hot-reload** — watch `.glsl` files, recompile on save
+- **Live patch reload** — TCP or OSC listener that calls `script_eval()` to
+  redefine `on_frame`/`on_osc` in the running VM without restarting
+- **Shader hot-reload** — watch `.glsl` files, recompile on save; expose
+  uniform values to Lua so patches can drive shader parameters directly
+- **Image scanline → Lua** — expose pixel row reads so a patch can sample
+  image luminance as an envelope without a round-trip through the GPU
+- **Multi-pass rendering** — render to offscreen texture, chain transforms;
+  expose render target handles to Lua
 - **SVG paths** — parse with nanosvg, render as line strip geometry
-- **Multi-pass rendering** — render to offscreen texture, chain transforms
-- **MIDI input** — map controller values to shader uniforms
+- **MIDI input** — map controller values to Lua globals

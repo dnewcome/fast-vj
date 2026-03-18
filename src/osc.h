@@ -33,10 +33,13 @@ void osc_init(int port);
 /* Signal listener thread to stop and join it. */
 void osc_shutdown(void);
 
-/* Convenience: read gain as float from atomic bits. */
+/* Read gain as float from atomic bits. */
 static inline float osc_gain(void) {
     int bits = atomic_load_explicit(&g_osc.gain_bits, memory_order_relaxed);
     float f;
     __builtin_memcpy(&f, &bits, sizeof(f));
     return f;
 }
+
+/* Write gain as float into atomic bits. */
+void osc_set_gain(float g);
