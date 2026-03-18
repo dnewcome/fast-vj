@@ -19,6 +19,10 @@ curl -fsSL https://raw.githubusercontent.com/nothings/stb/master/stb_image.h -o 
 echo "Fetching dr_wav..."
 curl -fsSL https://raw.githubusercontent.com/mackron/dr_libs/master/dr_wav.h -o $LIB/dr_wav.h
 
+# stb_image_resize2 - image downscaling
+echo "Fetching stb_image_resize2..."
+curl -fsSL https://raw.githubusercontent.com/nothings/stb/master/stb_image_resize2.h -o $LIB/stb_image_resize2.h
+
 # KissFFT - small FFT library
 KISSFFT_DIR=$LIB/kissfft
 if [ ! -f "$KISSFFT_DIR/kiss_fft.c" ]; then

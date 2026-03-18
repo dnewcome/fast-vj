@@ -5,7 +5,9 @@
 #include "clips.h"
 
 #define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image.h"
+#include "stb_image_resize2.h"
 
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
@@ -103,13 +105,32 @@ static int load_wav(const char *path, AudioClip *c) {
  * implementation details. Freed after GPU upload. */
 static uint8_t *s_pixels[CLIPS_MAX];
 
+#define MAX_TEX_SIZE 4096
+
 static int load_image_cpu(const char *path, ImageClip *c, int idx) {
     int w, h, ch;
     uint8_t *px = stbi_load(path, &w, &h, &ch, 4); /* force RGBA */
     if (!px) {
-        fprintf(stderr, "clips: failed to open %s\n", path);
+        fprintf(stderr, "clips: failed to load %s\n", path);
         return 0;
     }
+
+    /* Downscale if either dimension exceeds GPU texture size limit */
+    if (w > MAX_TEX_SIZE || h > MAX_TEX_SIZE) {
+        int nw = w, nh = h;
+        if (nw > MAX_TEX_SIZE) { nh = nh * MAX_TEX_SIZE / nw; nw = MAX_TEX_SIZE; }
+        if (nh > MAX_TEX_SIZE) { nw = nw * MAX_TEX_SIZE / nh; nh = MAX_TEX_SIZE; }
+        printf("  clips: resizing %s from %dx%d to %dx%d (GPU limit %d)\n",
+               path, w, h, nw, nh, MAX_TEX_SIZE);
+        uint8_t *scaled = malloc((size_t)(nw * nh * 4));
+        if (!scaled) { stbi_image_free(px); return 0; }
+        stbir_resize_uint8_linear(px, w, h, 0, scaled, nw, nh, 0, STBIR_RGBA);
+        stbi_image_free(px);
+        px = scaled;
+        w  = nw;
+        h  = nh;
+    }
+
     c->width  = w;
     c->height = h;
     s_pixels[idx] = px;
