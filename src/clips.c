@@ -180,9 +180,10 @@ void clips_scan(const char *dir, ClipList *cl) {
         } else if (is_video_ext(ext) && cl->num_video < CLIPS_MAX) {
             VideoClip *c = &cl->video[cl->num_video];
             if (video_load_avi(path, c)) {
-                printf("  video[%d] %s  %d frames  %dx%d  %.1ffps\n",
-                       cl->num_video, c->name,
-                       c->num_frames, c->width, c->height, c->fps);
+                printf("  video[%d] %s  %d frames  %dx%d  %.1ffps  %.1fMB (mmap)\n",
+                       cl->num_video, c->name, c->num_frames,
+                       c->width, c->height, c->fps,
+                       (float)c->source_size / (1024.0f * 1024.0f));
                 cl->num_video++;
             }
         } else {

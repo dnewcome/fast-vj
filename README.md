@@ -1,22 +1,41 @@
 # fast-vj
 
-A realtime audio/visual sampler for live performance. The guiding idea is
-**data is data**: audio waveforms, images, FFT spectra, and geometry are all
-just arrays of floats. They live on the GPU as textures and a GLSL shader is
-the universal transform between them.
+A realtime VJ sampler for live performance, inspired by
+[Veejay](http://veejayhq.net/) but built from scratch for speed and
+scriptability on constrained hardware.
 
-Targets resource-constrained devices — tested on Raspberry Pi 4 and desktop
-Ubuntu/Debian.
+The primary target is **Raspberry Pi 4** running fullscreen 1080p video with
+GPU shader effects at 60fps — something previous Pd/Gem and software-renderer
+approaches couldn't achieve. It also runs on desktop Linux (x86-64).
 
----
+**What it does:**
 
-## Concept
+- Plays back a library of video clips, images, and audio clips triggered by
+  OSC messages from any controller, DAW, or custom software
+- Applies realtime GLSL fragment shader effects — kaleidoscope, plasma, spectrum,
+  oscilloscope, and any custom shader you drop in `shaders/`
+- Reacts to live audio (microphone or clip playback) via FFT analysis exposed
+  as a GPU texture, driving shader parameters from your Lua patch
+- Is scriptable via LuaJIT — `on_frame(dt)` and `on_osc(addr, val)` callbacks
+  let you write reactive patches with full access to clip control, shader
+  uniforms, FFT data, and image pixels
+- Is controllable entirely over OSC UDP with sub-frame trigger latency
 
-Traditional VJ software treats audio and video as separate domains. fast-vj
-does not. A scanline of pixels can drive an audio envelope. The magnitude
-spectrum of an audio clip can modulate image brightness. A waveform can be
-drawn as a path. The goal is to make these cross-domain transforms cheap
-enough to happen every frame.
+**Why faster than Veejay on Pi:**
+
+Veejay is a mature, full-featured VJ system but its video pipeline predates
+GPU-accelerated decode and shader compositing on ARM. fast-vj is purpose-built
+around three Pi 4 advantages:
+
+1. **UMA (Unified Memory Architecture)** — CPU and GPU share the same physical
+   RAM. Uploading a decoded video frame to the GPU (`sg_update_image`) is a
+   `memcpy` within the same memory pool, not a bus transfer.
+2. **NEON-accelerated MJPEG decode** — libjpeg-turbo uses ARM NEON SIMD to
+   decode a 1080p JPEG frame in ~5ms. One frame per render loop, no
+   inter-frame dependencies.
+3. **Shader effects are free** — once the frame is on the GPU, applying a
+   kaleidoscope or plasma shader costs the same as no effect. The GPU runs
+   the fragment shader in parallel across all pixels.
 
 ---
 
@@ -26,22 +45,22 @@ enough to happen every frame.
 Media directory
   ├── *.wav   → dr_wav decodes to float32 mono PCM
   ├── *.png   → stb_image decodes to RGBA8, uploaded as immutable GPU texture
+  ├── *.jpg   → stb_image decodes to RGBA8, uploaded as immutable GPU texture
   ├── *.avi   → mmap'd MJPEG AVI; frame index built at load time
   └── clip/   → directory of sequential JPEGs (000001.jpg …)
                  all frames malloc'd into one contiguous buffer at startup
 
 OSC UDP listener (background thread)
   receives: /vj/audio <i>, /vj/image <i>, /vj/video <i>,
-            /vj/gain <f>, /vj/stop
-  writes atomic pending_* fields (memory_order_release)
+            /vj/gain <f>, /vj/stop, /vj/animate <ifff>
+  writes atomic pending_* fields + mutex-protected queues
 
 Render loop (main thread, vsync)
-  poll_osc()
-    atomic_exchange pending fields → activate clips
-  audio callback (ALSA thread)
-    reads current_audio, fills buffer from samples, pushes to ring buffer
+  poll_osc()      → activate clips, call Lua on_osc / on_animate callbacks
+  Lua on_frame()  → patch controls shaders, uniforms, clip selection
   update_video_texture()
     video_decode_frame() → libjpeg-turbo NEON decode → sg_update_image()
+  audio callback (ALSA thread) → ring buffer → waveform + FFT GPU textures
   sg_begin_pass / draw / sg_end_pass
     fragment shader reads:
       views[0] = current image or video frame (RGBA8)
@@ -56,31 +75,31 @@ same physical RAM. There is no PCIe bus transfer. Calling `sg_update_image()`
 is literally a `memcpy` within the same memory pool. This is fundamentally
 different from a discrete GPU where texture uploads cross a bus.
 
-For video, `sg_update_image()` with a 2K frame (~8MB RGBA) costs around
-8ms — well within a 33ms frame budget. AVI files are `mmap`'d so the OS
-manages paging; on Pi with enough RAM to hold the whole clip, all frames
-stay resident after the first playthrough.
+For video, `sg_update_image()` with a 1080p frame costs around 5–8ms — well
+within a 16ms frame budget at 60fps. AVI files are `mmap`'d so the OS manages
+paging; on Pi with enough RAM to hold the whole clip, all frames stay resident
+after the first playthrough.
 
 Sokol uses `SG_USAGE_STREAM` / `glTexSubImage2D` for stream textures, which
-never reallocates. This is why previous Pd/Gem approaches using `pix_buffer`
-were slow: they triggered `glTexImage2D` (reallocation) on every frame.
+never reallocates. This is why Pd/Gem approaches using `pix_buffer` were slow:
+they triggered `glTexImage2D` (reallocation) on every frame.
 
 ### Audio/video sync
 
-The audio buffer size is 1024 samples (power-of-2 for ALSA alignment).
-At 44100Hz this is ~23ms per buffer. The render loop runs at vsync
-(~60fps desktop, ~30fps Pi). The ring buffer decouples the two rates:
-the audio callback pushes into it, the render loop drains it once per frame.
+The audio buffer size is 1024 samples at 44100Hz (~23ms per buffer). The
+render loop runs at vsync. A ring buffer decouples the two rates: the ALSA
+callback pushes samples into it, the render loop drains it once per frame to
+update the waveform and FFT GPU textures.
 
 Video frame advance is driven by wall-clock accumulation (`sapp_frame_duration`)
-against the clip's FPS, so it stays in sync regardless of render rate.
+against the clip's FPS, so playback stays in sync regardless of render rate.
 
 ### The shader pipeline
 
-Everything on the GPU is a 2D texture, even 1D signals — a waveform is stored
-as a `2048×1` `R32F` texture. Fragment shaders sample these textures by UV
-coordinate and can combine them freely. Crossing domains (audio → visual,
-image → audio envelope) is just a texture lookup in GLSL.
+The active image or video frame is bound as a GPU texture alongside the audio
+waveform and FFT spectrum. Fragment shaders can sample all three freely.
+Custom shaders drop into `shaders/` as plain GLSL files with a standard
+injected header — no compilation step, no shader tools required.
 
 ---
 

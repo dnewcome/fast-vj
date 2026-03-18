@@ -155,9 +155,6 @@ int video_load(const char *dir, VideoClip *vc) {
         return 0;
     }
 
-    printf("  video[?] %s  %d frames  %dx%d  %.1fMB\n",
-           vc->name, vc->num_frames, w, h,
-           (float)total_bytes / (1024.0f * 1024.0f));
     return 1;
 }
 
@@ -431,9 +428,6 @@ int video_load_avi(const char *file, VideoClip *vc) {
         return 0;
     }
 
-    printf("  video[?] %s  %d frames  %dx%d  %.1ffps  %.1fMB (mmap)\n",
-           vc->name, vc->num_frames, w, h, vc->fps,
-           (float)fsize / (1024.0f * 1024.0f));
     return 1;
 }
 
