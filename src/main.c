@@ -115,6 +115,7 @@ static struct {
     /* video playback — render thread only */
     int             current_video;  /* -1 = no video */
     int             video_frame;    /* current frame index */
+    int             video_frame_decoded; /* last frame index actually decoded */
     double          video_accum;    /* accumulated time for frame advance (seconds) */
     sg_image        video_img;      /* stream texture, created on first video trigger */
     sg_view         video_view;
@@ -166,7 +167,7 @@ static void audio_cb(float *buf, int num_frames, int num_channels) {
 /* Init                                                                */
 /* ------------------------------------------------------------------ */
 
-static const char *g_media_dir    = ".";
+static const char *g_media_dir    = NULL;
 static int         g_osc_port     = 9000;
 static const char *g_script_path  = NULL;
 static const char *g_shaders_dir  = "shaders";
@@ -322,8 +323,9 @@ static void poll_osc(void) {
                                            memory_order_acq_rel);
     if (req_vid != -1) {
         if (req_vid >= 0 && req_vid < g_clips.num_video) {
-            app.current_video  = req_vid;
-            app.video_frame    = 0;
+            app.current_video        = req_vid;
+            app.video_frame          = 0;
+            app.video_frame_decoded  = -1;
             app.video_accum    = 0.0;
             app.current_image  = -1;  /* video overrides static image */
             printf("playing video[%d] %s\n", req_vid, g_clips.video[req_vid].name);
@@ -334,6 +336,17 @@ static void poll_osc(void) {
         }
         script_call_osc("/vj/video", 'i', req_vid, 0);
     }
+
+    /* Animate queue */
+    pthread_mutex_lock(&g_osc.anim_mutex);
+    while (g_osc.anim_tail != g_osc.anim_head) {
+        OscAnimate a = g_osc.anim_queue[g_osc.anim_tail];
+        g_osc.anim_tail = (g_osc.anim_tail + 1) % OSC_QUEUE_SIZE;
+        pthread_mutex_unlock(&g_osc.anim_mutex);
+        script_call_animate(a.param, a.from, a.to, a.duration);
+        pthread_mutex_lock(&g_osc.anim_mutex);
+    }
+    pthread_mutex_unlock(&g_osc.anim_mutex);
 
     /* Generic queue — forward unrecognised addresses to Lua */
     pthread_mutex_lock(&g_osc.q_mutex);
@@ -377,17 +390,19 @@ static void update_video_texture(void) {
         app.video_tex_h = vc->height;
     }
 
-    /* Decode current frame — libjpeg-turbo with NEON SIMD on ARM.
-     * At 2K (2048×1080), this takes ~10-15ms on Pi 4. */
-    if (video_decode_frame(vc, app.video_frame, app.tj) == 0) {
-        sg_update_image(app.video_img, &(sg_image_data){
-            .mip_levels[0] = {
-                .ptr  = vc->pixels,
-                .size = (size_t)(vc->width * vc->height * 4),
-            },
-        });
-        app.bind.views[0] = app.video_view;
+    /* Decode only when the frame index has changed */
+    if (app.video_frame != app.video_frame_decoded) {
+        if (video_decode_frame(vc, app.video_frame, app.tj) == 0) {
+            sg_update_image(app.video_img, &(sg_image_data){
+                .mip_levels[0] = {
+                    .ptr  = vc->pixels,
+                    .size = (size_t)(vc->width * vc->height * 4),
+                },
+            });
+        }
+        app.video_frame_decoded = app.video_frame;
     }
+    app.bind.views[0] = app.video_view;
 
     /* Advance frame at clip's FPS regardless of render rate */
     app.video_accum += sapp_frame_duration();
@@ -507,10 +522,8 @@ sapp_desc sokol_main(int argc, char *argv[]) {
         else
             g_osc_port = atoi(argv[i]);
     }
-    if (!g_media_dir) {
-        fprintf(stderr, "usage: fast-vj <media-dir> [osc-port] [-s patch.lua] [-S shaders/] [-m [device]] [-f]\n");
-        exit(1);
-    }
+    if (!g_media_dir)
+        g_media_dir = ".";
 
     /* Scan media directory before the window opens */
     printf("Scanning %s ...\n", g_media_dir);

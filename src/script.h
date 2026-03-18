@@ -42,6 +42,9 @@ int  script_eval(const char *code);
  * arg_type: 'i' integer, 'f' float, 0 for no arg. */
 void script_call_osc(const char *addr, int arg_type, int ival, float fval);
 
+/* Call on_animate(param, from, to, duration) if defined in the script. */
+void script_call_animate(int param, float from, float to, float duration);
+
 /* Call on_frame(dt) if defined in the script. */
 void script_call_frame(double dt);
 

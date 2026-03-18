@@ -484,24 +484,26 @@ DISPLAY=:0 ./build/fast-vj media/ 9000 -m -f -s patches/shader_audio.lua
 The patch switches to the plasma shader (index 2 in default shaders/ load order)
 and updates `u_p[0]` (speed) and `u_p[1]` (image blend) each frame from FFT data.
 
-#### `patches/osc_control.lua` — full manual OSC control
+#### `patches/osc_control.lua` — full manual OSC control with animation
 
-No audio reactivity. Every shader parameter is driven by OSC messages.
+No audio reactivity. Every shader parameter is driven by OSC messages,
+with built-in linear interpolation animation.
 
 ```bash
 DISPLAY=:0 ./build/fast-vj media/ 9000 -f -s patches/osc_control.lua
 ```
 
-Switch shaders and set parameters over OSC:
+**Switch shaders and set parameters:**
 
 ```bash
 # Switch to shader by index (0 = first .glsl file alphabetically)
 oscsend localhost 9000 /vj/shader i 0   # default
-oscsend localhost 9000 /vj/shader i 1   # oscilloscope
-oscsend localhost 9000 /vj/shader i 2   # plasma
-oscsend localhost 9000 /vj/shader i 3   # spectrum
+oscsend localhost 9000 /vj/shader i 1   # kaleidoscope
+oscsend localhost 9000 /vj/shader i 2   # oscilloscope
+oscsend localhost 9000 /vj/shader i 3   # plasma
+oscsend localhost 9000 /vj/shader i 4   # spectrum
 
-# Set shader uniform parameters (u_p[0]..u_p[14])
+# Set shader uniform parameters immediately (u_p[0]..u_p[14])
 oscsend localhost 9000 /vj/p0 f 0.8    # plasma: speed
 oscsend localhost 9000 /vj/p1 f 0.5    # plasma: image blend amount
 oscsend localhost 9000 /vj/p0 f 0.5    # oscilloscope: glow intensity
@@ -514,6 +516,39 @@ oscsend localhost 9000 /vj/image i 0   # show image clip 0
 oscsend localhost 9000 /vj/audio i 0   # play audio clip 0
 oscsend localhost 9000 /vj/gain  f 0.7 # set master gain
 oscsend localhost 9000 /vj/stop        # stop audio
+```
+
+**Animate parameters with linear interpolation:**
+
+```
+/vj/animate  ifff  <param>  <from>  <to>  <duration_seconds>
+```
+
+```bash
+# Animate kaleidoscope segments (u_p[0]) from 2 to 12 over 3 seconds
+oscsend localhost 9000 /vj/animate ifff 0 2.0 12.0 3.0
+
+# Spin speed (u_p[1]) ramps up from 0 to 2 over 5 seconds
+oscsend localhost 9000 /vj/animate ifff 1 0.0 2.0 5.0
+
+# Zoom in slowly over 10 seconds
+oscsend localhost 9000 /vj/animate ifff 2 1.0 3.0 10.0
+
+# Animate back to zero over 2 seconds
+oscsend localhost 9000 /vj/animate ifff 1 2.0 0.0 2.0
+```
+
+Animations run to completion then hold the final value. Sending a new
+`/vj/animate` for the same param cancels the current one and starts fresh.
+
+**Clear animations:**
+
+```bash
+# Stop animation for param 0, hold current value
+oscsend localhost 9000 /vj/anim_clear i 0
+
+# Stop all animations
+oscsend localhost 9000 /vj/anim_clear i -1
 ```
 
 Install `oscsend` on Debian/Ubuntu/Raspbian:

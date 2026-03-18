@@ -63,6 +63,22 @@ static void dispatch(tosc_message *msg) {
         atomic_store_explicit(&g_osc.stop_audio, 1, memory_order_release);
         printf("osc: /vj/stop\n");
 
+    } else if (strcmp(addr, "/vj/animate") == 0 && fmt[0] == 'i') {
+        OscAnimate a;
+        a.param    = tosc_getNextInt32(msg);
+        a.from     = tosc_getNextFloat(msg);
+        a.to       = tosc_getNextFloat(msg);
+        a.duration = tosc_getNextFloat(msg);
+        printf("osc: /vj/animate p%d  %.2f -> %.2f  over %.2fs\n",
+               a.param, a.from, a.to, a.duration);
+        pthread_mutex_lock(&g_osc.anim_mutex);
+        int next = (g_osc.anim_head + 1) % OSC_QUEUE_SIZE;
+        if (next != g_osc.anim_tail) {
+            g_osc.anim_queue[g_osc.anim_head] = a;
+            g_osc.anim_head = next;
+        }
+        pthread_mutex_unlock(&g_osc.anim_mutex);
+
     } else {
         /* Forward to Lua via the generic queue */
         OscMsg m;
@@ -132,6 +148,9 @@ void osc_init(int port) {
     g_osc.q_head = 0;
     g_osc.q_tail = 0;
     pthread_mutex_init(&g_osc.q_mutex, NULL);
+    g_osc.anim_head = 0;
+    g_osc.anim_tail = 0;
+    pthread_mutex_init(&g_osc.anim_mutex, NULL);
 
     s_sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (s_sock < 0) { perror("osc: socket"); return; }
@@ -165,4 +184,5 @@ void osc_shutdown(void) {
     }
     pthread_join(s_thread, NULL);
     pthread_mutex_destroy(&g_osc.q_mutex);
+    pthread_mutex_destroy(&g_osc.anim_mutex);
 }

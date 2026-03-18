@@ -228,6 +228,21 @@ void script_call_osc(const char *addr, int arg_type, int ival, float fval) {
     }
 }
 
+void script_call_animate(int param, float from, float to, float duration) {
+    if (!L) return;
+    lua_getglobal(L, "on_animate");
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 1); return; }
+
+    lua_pushinteger(L, param);
+    lua_pushnumber(L, (lua_Number)from);
+    lua_pushnumber(L, (lua_Number)to);
+    lua_pushnumber(L, (lua_Number)duration);
+    if (lua_pcall(L, 4, 0, 0) != 0) {
+        fprintf(stderr, "script on_animate: %s\n", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+}
+
 void script_call_frame(double dt) {
     if (!L) return;
     lua_getglobal(L, "on_frame");

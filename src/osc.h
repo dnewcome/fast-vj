@@ -29,6 +29,12 @@ typedef struct {
     int   ival;
 } OscMsg;
 
+/* Animate queue — /vj/animate ifff <param> <from> <to> <duration> */
+typedef struct {
+    int   param;
+    float from, to, duration;
+} OscAnimate;
+
 typedef struct {
     _Atomic int   pending_audio;  /* -1 = no pending, >=0 = clip index */
     _Atomic int   pending_image;  /* -1 = no pending, >=0 = clip index */
@@ -39,9 +45,15 @@ typedef struct {
 
     /* Generic message queue for Lua forwarding */
     OscMsg        queue[OSC_QUEUE_SIZE];
-    int           q_head;         /* written by listener thread */
-    int           q_tail;         /* read by render thread       */
+    int           q_head;
+    int           q_tail;
     pthread_mutex_t q_mutex;
+
+    /* Animate queue */
+    OscAnimate    anim_queue[OSC_QUEUE_SIZE];
+    int           anim_head;
+    int           anim_tail;
+    pthread_mutex_t anim_mutex;
 } OscState;
 
 extern OscState g_osc;
