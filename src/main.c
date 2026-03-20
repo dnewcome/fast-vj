@@ -176,7 +176,11 @@ static const char *g_script_path  = NULL;
 static const char *g_shaders_dir  = "shaders";
 static int         g_mic_mode     = 0;
 static const char *g_mic_device   = NULL;   /* NULL = "default" */
+#ifdef __EMSCRIPTEN__
+static int         g_show_fps     = 1;
+#else
 static int         g_show_fps     = 0;
+#endif
 static int         g_fullscreen   = 0;
 
 static void init(void) {
@@ -269,6 +273,10 @@ static void init(void) {
     app.current_image = -1;
     app.current_video = -1;
 
+    /* sokol_audio uses ScriptProcessorNode on WASM, which runs on the main
+       thread and disrupts frame pacing. Skip it until AudioWorklet support
+       is added. */
+#ifndef __EMSCRIPTEN__
     saudio_setup(&(saudio_desc){
         .sample_rate   = SAMPLE_RATE,
         .num_channels  = 1,
@@ -276,6 +284,7 @@ static void init(void) {
         .stream_cb     = audio_cb,
         .logger.func   = slog_func,
     });
+#endif
 
     /* ---- Microphone input (optional) ---- */
     if (g_mic_mode)
@@ -503,8 +512,10 @@ static void frame(void) {
             char title[64];
             snprintf(title, sizeof(title), "fast-vj  %.1f fps", fps);
             sapp_set_window_title(title);
+#ifndef __EMSCRIPTEN__
             printf("fps: %.1f\n", fps);
             fflush(stdout);
+#endif
             app.fps_frames = 0;
             app.fps_accum  = 0.0;
         }

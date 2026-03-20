@@ -47,6 +47,8 @@
             console.log(text);
             if (element) {
               element.value += text + "\n";
+              if (element.value.length > 8192)
+                element.value = element.value.slice(-4096);
               element.scrollTop = element.scrollHeight; // focus on bottom
             }
           };
