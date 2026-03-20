@@ -218,23 +218,41 @@ void clips_upload_gpu(ClipList *cl, sg_sampler smp) {
         uint8_t   *px = s_pixels[i];
         if (!px) continue;
 
-        c->gpu_img = sg_make_image(&(sg_image_desc){
+        /* Build full mip chain with stb_image_resize2 */
+        sg_image_desc desc = {
             .width        = c->width,
             .height       = c->height,
             .pixel_format = SG_PIXELFORMAT_RGBA8,
-            .data.mip_levels[0] = {
-                .ptr  = px,
-                .size = (size_t)(c->width * c->height * 4),
-            },
-        });
-        c->gpu_view = sg_make_view(&(sg_view_desc){
-            .texture.image = c->gpu_img,
-        });
+        };
+        desc.data.mip_levels[0].ptr  = px;
+        desc.data.mip_levels[0].size = (size_t)(c->width * c->height * 4);
 
-        c->pixels  = px;   /* keep CPU copy for vj.image_pixel() */
+        uint8_t *mip_bufs[SG_MAX_MIPMAPS] = {0};
+        int mw = c->width, mh = c->height, num_mips = 1;
+        while ((mw > 1 || mh > 1) && num_mips < SG_MAX_MIPMAPS) {
+            int sw = mw > 1 ? mw / 2 : 1;
+            int sh = mh > 1 ? mh / 2 : 1;
+            uint8_t *buf = malloc((size_t)(sw * sh * 4));
+            if (!buf) break;
+            stbir_resize_uint8_srgb(
+                (num_mips == 1 ? px : mip_bufs[num_mips - 1]),
+                mw, mh, 0, buf, sw, sh, 0, STBIR_RGBA);
+            mip_bufs[num_mips] = buf;
+            desc.data.mip_levels[num_mips].ptr  = buf;
+            desc.data.mip_levels[num_mips].size = (size_t)(sw * sh * 4);
+            desc.num_mipmaps = ++num_mips;
+            mw = sw; mh = sh;
+        }
+
+        c->gpu_img  = sg_make_image(&desc);
+        c->gpu_view = sg_make_view(&(sg_view_desc){ .texture.image = c->gpu_img });
+
+        for (int m = 1; m < num_mips; m++) free(mip_bufs[m]);
+
+        c->pixels   = px;
         s_pixels[i] = NULL;
     }
-    (void)smp; /* reserved for custom sampler per clip in future */
+    (void)smp;
 }
 
 /* ------------------------------------------------------------------ */

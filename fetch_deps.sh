@@ -43,4 +43,12 @@ if [ ! -f "$TINYOSC_DIR/tinyosc.c" ]; then
     git clone --depth=1 https://github.com/mhroth/tinyosc.git $TINYOSC_DIR
 fi
 
+# Lua 5.4 source (for WASM/Emscripten build — native builds use system package)
+LUA54_DIR=$LIB/lua54
+if [ ! -d "$LUA54_DIR" ]; then
+    echo "Fetching Lua 5.4..."
+    curl -fsSL https://www.lua.org/ftp/lua-5.4.7.tar.gz | tar -xz -C $LIB/
+    mv $LIB/lua-5.4.7 $LUA54_DIR
+fi
+
 echo "Done. All deps in $LIB/"
