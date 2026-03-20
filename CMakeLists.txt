@@ -126,6 +126,7 @@ else()
     # Emscripten: output as a self-contained HTML page for easy browser testing
     set_target_properties(fast-vj PROPERTIES SUFFIX ".html")
     target_link_options(fast-vj PRIVATE
+        "SHELL:--shell-file ${CMAKE_SOURCE_DIR}/tools/shell.html"
         "SHELL:-sUSE_WEBGL2=1"
         "SHELL:-sFULL_ES3=1"
         "SHELL:-sALLOW_MEMORY_GROWTH=1"

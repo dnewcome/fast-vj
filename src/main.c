@@ -373,13 +373,28 @@ static void poll_osc(void) {
     }
     pthread_mutex_unlock(&g_osc.anim_mutex);
 
-    /* Generic queue — forward unrecognised addresses to Lua */
+    /* Generic queue — /vj/pN sets shader param N, rest forwarded to Lua */
     pthread_mutex_lock(&g_osc.q_mutex);
     while (g_osc.q_tail != g_osc.q_head) {
         OscMsg m = g_osc.queue[g_osc.q_tail];
         g_osc.q_tail = (g_osc.q_tail + 1) % OSC_QUEUE_SIZE;
         pthread_mutex_unlock(&g_osc.q_mutex);
-        script_call_osc(m.addr, m.type, m.ival, m.fval);
+
+        int pidx = -1;
+        if (strncmp(m.addr, "/vj/p", 5) == 0 && m.addr[5] != '\0') {
+            char *end;
+            long n = strtol(m.addr + 5, &end, 10);
+            if (*end == '\0' && n >= 0 && n < SHADER_PARAMS_COUNT)
+                pidx = (int)n;
+        }
+        if (pidx >= 0) {
+            float val = (m.type == 'f') ? m.fval : (float)m.ival;
+            g_shader_params.p[pidx] = val;
+            printf("p[%d] = %.3f\n", pidx, val);
+        } else {
+            script_call_osc(m.addr, m.type, m.ival, m.fval);
+        }
+
         pthread_mutex_lock(&g_osc.q_mutex);
     }
     pthread_mutex_unlock(&g_osc.q_mutex);
