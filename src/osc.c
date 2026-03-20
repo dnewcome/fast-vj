@@ -5,9 +5,42 @@
  * them with tinyosc, and writes results into g_osc (atomic state).
  * The main/render thread reads g_osc each frame with atomic_exchange,
  * so commands are never lost even if they arrive mid-frame.
+ *
+ * On WASM: UDP sockets are not available in the browser. The stubs
+ * below initialise g_osc to the idle state so the rest of the engine
+ * compiles and runs without changes; OSC is simply a no-op.
  */
 
 #include "osc.h"
+
+#ifdef __EMSCRIPTEN__
+
+#include <string.h>
+#include <stdio.h>
+
+OscState g_osc;
+
+void osc_init(int port) {
+    (void)port;
+    memset(&g_osc, 0, sizeof(g_osc));
+    atomic_store(&g_osc.pending_audio, -1);
+    atomic_store(&g_osc.pending_image, -1);
+    atomic_store(&g_osc.pending_video, -1);
+    atomic_store(&g_osc.stop_audio, 0);
+    osc_set_gain(1.0f);
+    printf("osc: WebAssembly build — OSC disabled (no UDP in browser)\n");
+}
+
+void osc_shutdown(void) {}
+
+void osc_set_gain(float f) {
+    int bits;
+    __builtin_memcpy(&bits, &f, sizeof(bits));
+    atomic_store_explicit(&g_osc.gain_bits, bits, memory_order_relaxed);
+}
+
+#else /* !__EMSCRIPTEN__ — full native UDP implementation below */
+
 #include "tinyosc/tinyosc.h"
 
 #include <stdio.h>
@@ -186,3 +219,5 @@ void osc_shutdown(void) {
     pthread_mutex_destroy(&g_osc.q_mutex);
     pthread_mutex_destroy(&g_osc.anim_mutex);
 }
+
+#endif /* __EMSCRIPTEN__ */

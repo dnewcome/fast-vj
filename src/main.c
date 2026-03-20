@@ -33,7 +33,9 @@
 #include "shaders.h"
 #include "mic.h"
 
-#include "turbojpeg.h"
+#ifndef __EMSCRIPTEN__
+#  include "turbojpeg.h"
+#endif
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -121,7 +123,7 @@ static struct {
     sg_view         video_view;
     int             video_tex_w;    /* current texture dimensions */
     int             video_tex_h;
-    tjhandle        tj;             /* reusable libjpeg-turbo decompressor */
+    void           *tj;             /* libjpeg-turbo handle (tjhandle); NULL on WASM */
 
     float           time;
 
@@ -243,9 +245,11 @@ static void init(void) {
     /* ---- FFT ---- */
     app.fft_cfg = kiss_fftr_alloc(FFT_SIZE, 0, NULL, NULL);
 
-    /* ---- libjpeg-turbo (video decode) ---- */
+    /* ---- libjpeg-turbo (video decode, native only) ---- */
+#ifndef __EMSCRIPTEN__
     app.tj = tjInitDecompress();
     if (!app.tj) fprintf(stderr, "warning: tjInitDecompress failed\n");
+#endif
 
     /* ---- Audio + video state ---- */
     atomic_store(&app.current_audio, -1);
@@ -366,7 +370,11 @@ static void poll_osc(void) {
 /* ------------------------------------------------------------------ */
 
 static void update_video_texture(void) {
+#ifndef __EMSCRIPTEN__
     if (app.current_video < 0 || !app.tj) return;
+#else
+    if (app.current_video < 0) return;
+#endif
     VideoClip *vc = &g_clips.video[app.current_video];
 
     /* (Re)create the stream texture if size changed or first use */
@@ -491,7 +499,9 @@ static void cleanup(void) {
     shaders_free();
     sg_shutdown();
     kiss_fftr_free(app.fft_cfg);
+#ifndef __EMSCRIPTEN__
     if (app.tj) tjDestroy(app.tj);
+#endif
     clips_free(&g_clips);
 }
 
