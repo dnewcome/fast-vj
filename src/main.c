@@ -187,10 +187,11 @@ static void init(void) {
 
     /* ---- Samplers ---- */
     app.smp = sg_make_sampler(&(sg_sampler_desc){
-        .min_filter = SG_FILTER_LINEAR,
-        .mag_filter = SG_FILTER_LINEAR,
-        .wrap_u     = SG_WRAP_CLAMP_TO_EDGE,
-        .wrap_v     = SG_WRAP_CLAMP_TO_EDGE,
+        .min_filter    = SG_FILTER_LINEAR,
+        .mag_filter    = SG_FILTER_LINEAR,
+        .mipmap_filter = SG_FILTER_LINEAR,   /* trilinear */
+        .wrap_u        = SG_WRAP_REPEAT,
+        .wrap_v        = SG_WRAP_REPEAT,
     });
     /* R32F textures require NEAREST filtering in WebGL2 to be texture-complete
        (OES_texture_float_linear not guaranteed). Audio/FFT visualisation
