@@ -1,4 +1,5 @@
 build/
+build-wasm/
 lib/sokol/
 lib/kissfft/
 lib/stb_image.h

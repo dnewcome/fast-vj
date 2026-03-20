@@ -39,6 +39,7 @@ typedef struct {
     _Atomic int   pending_audio;  /* -1 = no pending, >=0 = clip index */
     _Atomic int   pending_image;  /* -1 = no pending, >=0 = clip index */
     _Atomic int   pending_video;  /* -1 = no pending, >=0 = clip index */
+    _Atomic int   pending_shader; /* -1 = no pending, >=0 = shader index */
     _Atomic int   stop_audio;     /* non-zero = stop requested */
     /* gain stored as IEEE 754 bits so we can use _Atomic int */
     _Atomic int   gain_bits;      /* reinterpret_cast<int>(float gain) */

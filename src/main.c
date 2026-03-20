@@ -98,7 +98,8 @@ static struct {
     sg_view         fft_view;
     sg_image        blank_img;     /* 1×1 transparent — default image slot */
     sg_view         blank_view;
-    sg_sampler      smp;
+    sg_sampler      smp;           /* linear — for RGBA image textures */
+    sg_sampler      float_smp;    /* nearest — for R32F audio/FFT textures (WebGL2 compat) */
 
     /* CPU upload buffers */
     float           audio_frame[AUDIO_TEX_WIDTH];
@@ -184,10 +185,19 @@ static void init(void) {
         .logger.func = vj_log,
     });
 
-    /* ---- Shared sampler ---- */
+    /* ---- Samplers ---- */
     app.smp = sg_make_sampler(&(sg_sampler_desc){
         .min_filter = SG_FILTER_LINEAR,
         .mag_filter = SG_FILTER_LINEAR,
+        .wrap_u     = SG_WRAP_CLAMP_TO_EDGE,
+        .wrap_v     = SG_WRAP_CLAMP_TO_EDGE,
+    });
+    /* R32F textures require NEAREST filtering in WebGL2 to be texture-complete
+       (OES_texture_float_linear not guaranteed). Audio/FFT visualisation
+       doesn't benefit from linear interpolation anyway. */
+    app.float_smp = sg_make_sampler(&(sg_sampler_desc){
+        .min_filter = SG_FILTER_NEAREST,
+        .mag_filter = SG_FILTER_NEAREST,
         .wrap_u     = SG_WRAP_CLAMP_TO_EDGE,
         .wrap_v     = SG_WRAP_CLAMP_TO_EDGE,
     });
@@ -234,7 +244,8 @@ static void init(void) {
         .views[0]          = app.blank_view,  /* image slot — blank until triggered */
         .views[1]          = app.audio_view,
         .views[2]          = app.fft_view,
-        .samplers[0]       = app.smp,
+        .samplers[0]       = app.smp,         /* linear — image_tex */
+        .samplers[1]       = app.float_smp,   /* nearest — audio_tex, fft_tex */
     };
 
     app.pass_action = (sg_pass_action){
@@ -340,6 +351,15 @@ static void poll_osc(void) {
             printf("video stopped\n");
         }
         script_call_osc("/vj/video", 'i', req_vid, 0);
+    }
+
+    /* Shader trigger */
+    int req_shd = atomic_exchange_explicit(&g_osc.pending_shader, -1,
+                                           memory_order_acq_rel);
+    if (req_shd >= 0 && req_shd < g_shaders.num_shaders) {
+        g_current_shader = req_shd;
+        printf("shader[%d] %s\n", req_shd, g_shaders.shaders[req_shd].name);
+        script_call_osc("/vj/shader", 'i', req_shd, 0);
     }
 
     /* Animate queue */
@@ -535,8 +555,13 @@ sapp_desc sokol_main(int argc, char *argv[]) {
         else
             g_osc_port = atoi(argv[i]);
     }
+#ifdef __EMSCRIPTEN__
+    if (!g_media_dir)
+        g_media_dir = "media";
+#else
     if (!g_media_dir)
         g_media_dir = ".";
+#endif
 
     /* Scan media directory before the window opens */
     printf("Scanning %s ...\n", g_media_dir);
@@ -554,5 +579,6 @@ sapp_desc sokol_main(int argc, char *argv[]) {
         .window_title  = "fast-vj",
         .swap_interval = 1,
         .logger.func   = vj_log,
+        .html5.canvas_resize = true,
     };
 }

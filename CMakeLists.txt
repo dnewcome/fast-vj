@@ -131,6 +131,10 @@ else()
         "SHELL:-sALLOW_MEMORY_GROWTH=1"
         "SHELL:-sINITIAL_MEMORY=67108864"
         "SHELL:-sEXIT_RUNTIME=0"
+        "SHELL:-sMINIFY_HTML=0"
+        "SHELL:-lwebsocket.js"
+        "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/shaders@shaders"
+        "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/media@media"
     )
 endif()
 

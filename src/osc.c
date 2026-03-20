@@ -15,29 +15,146 @@
 
 #ifdef __EMSCRIPTEN__
 
+#include "tinyosc/tinyosc.h"
+#include <emscripten/websocket.h>
 #include <string.h>
 #include <stdio.h>
 
 OscState g_osc;
-
-void osc_init(int port) {
-    (void)port;
-    memset(&g_osc, 0, sizeof(g_osc));
-    atomic_store(&g_osc.pending_audio, -1);
-    atomic_store(&g_osc.pending_image, -1);
-    atomic_store(&g_osc.pending_video, -1);
-    atomic_store(&g_osc.stop_audio, 0);
-    osc_set_gain(1.0f);
-    printf("osc: WebAssembly build — OSC disabled (no UDP in browser)\n");
-}
-
-void osc_shutdown(void) {}
 
 void osc_set_gain(float f) {
     int bits;
     __builtin_memcpy(&bits, &f, sizeof(bits));
     atomic_store_explicit(&g_osc.gain_bits, bits, memory_order_relaxed);
 }
+
+/* Single-threaded dispatch — no mutexes needed. */
+static void dispatch(tosc_message *msg) {
+    const char *addr = tosc_getAddress(msg);
+    const char *fmt  = tosc_getFormat(msg);
+
+    if (strcmp(addr, "/vj/audio") == 0 && fmt[0] == 'i') {
+        int idx = tosc_getNextInt32(msg);
+        atomic_store_explicit(&g_osc.pending_audio, idx, memory_order_release);
+        printf("osc: /vj/audio %d\n", idx);
+
+    } else if (strcmp(addr, "/vj/image") == 0 && fmt[0] == 'i') {
+        int idx = tosc_getNextInt32(msg);
+        atomic_store_explicit(&g_osc.pending_image, idx, memory_order_release);
+        printf("osc: /vj/image %d\n", idx);
+
+    } else if (strcmp(addr, "/vj/gain") == 0 && fmt[0] == 'f') {
+        float g = tosc_getNextFloat(msg);
+        osc_set_gain(g);
+        printf("osc: /vj/gain %.3f\n", g);
+
+    } else if (strcmp(addr, "/vj/video") == 0 && fmt[0] == 'i') {
+        int idx = tosc_getNextInt32(msg);
+        atomic_store_explicit(&g_osc.pending_video, idx, memory_order_release);
+        printf("osc: /vj/video %d\n", idx);
+
+    } else if (strcmp(addr, "/vj/shader") == 0 && fmt[0] == 'i') {
+        int idx = tosc_getNextInt32(msg);
+        atomic_store_explicit(&g_osc.pending_shader, idx, memory_order_release);
+        printf("osc: /vj/shader %d\n", idx);
+
+    } else if (strcmp(addr, "/vj/stop") == 0) {
+        atomic_store_explicit(&g_osc.stop_audio, 1, memory_order_release);
+        printf("osc: /vj/stop\n");
+
+    } else if (strcmp(addr, "/vj/animate") == 0 && fmt[0] == 'i') {
+        OscAnimate a;
+        a.param    = tosc_getNextInt32(msg);
+        a.from     = tosc_getNextFloat(msg);
+        a.to       = tosc_getNextFloat(msg);
+        a.duration = tosc_getNextFloat(msg);
+        printf("osc: /vj/animate p%d  %.2f -> %.2f  over %.2fs\n",
+               a.param, a.from, a.to, a.duration);
+        int next = (g_osc.anim_head + 1) % OSC_QUEUE_SIZE;
+        if (next != g_osc.anim_tail) {
+            g_osc.anim_queue[g_osc.anim_head] = a;
+            g_osc.anim_head = next;
+        }
+
+    } else {
+        OscMsg m;
+        strncpy(m.addr, addr, sizeof(m.addr) - 1);
+        m.addr[sizeof(m.addr) - 1] = '\0';
+        if (fmt[0] == 'f') {
+            m.type = 'f'; m.fval = tosc_getNextFloat(msg); m.ival = 0;
+        } else if (fmt[0] == 'i') {
+            m.type = 'i'; m.ival = tosc_getNextInt32(msg); m.fval = 0;
+        } else {
+            m.type = 0; m.fval = 0; m.ival = 0;
+        }
+        int next = (g_osc.q_head + 1) % OSC_QUEUE_SIZE;
+        if (next != g_osc.q_tail) {
+            g_osc.queue[g_osc.q_head] = m;
+            g_osc.q_head = next;
+        }
+    }
+}
+
+static EM_BOOL ws_onmessage(int eventType,
+                             const EmscriptenWebSocketMessageEvent *e,
+                             void *userData) {
+    (void)eventType; (void)userData;
+    if (e->isText || e->numBytes == 0) return EM_TRUE;
+    char *buf = (char *)e->data;
+    int   len = (int)e->numBytes;
+    if (tosc_isBundle(buf)) {
+        tosc_bundle bundle;
+        tosc_parseBundle(&bundle, buf, len);
+        tosc_message msg;
+        while (tosc_getNextMessage(&bundle, &msg))
+            dispatch(&msg);
+    } else {
+        tosc_message msg;
+        if (tosc_parseMessage(&msg, buf, len) == 0)
+            dispatch(&msg);
+    }
+    return EM_TRUE;
+}
+
+static EM_BOOL ws_onopen(int eventType,
+                          const EmscriptenWebSocketOpenEvent *e,
+                          void *userData) {
+    (void)eventType; (void)e; (void)userData;
+    printf("osc: WebSocket proxy connected\n");
+    return EM_TRUE;
+}
+
+static EM_BOOL ws_onerror(int eventType,
+                           const EmscriptenWebSocketErrorEvent *e,
+                           void *userData) {
+    (void)eventType; (void)e; (void)userData;
+    printf("osc: WebSocket error — is osc_proxy.py running?\n");
+    return EM_TRUE;
+}
+
+void osc_init(int port) {
+    (void)port;
+    memset(&g_osc, 0, sizeof(g_osc));
+    atomic_store(&g_osc.pending_audio,  -1);
+    atomic_store(&g_osc.pending_image,  -1);
+    atomic_store(&g_osc.pending_video,  -1);
+    atomic_store(&g_osc.pending_shader, -1);
+    atomic_store(&g_osc.stop_audio,      0);
+    osc_set_gain(1.0f);
+
+    EmscriptenWebSocketCreateAttributes attrs = {
+        "ws://localhost:9001",
+        NULL,
+        EM_TRUE   /* createOnMainThread */
+    };
+    EMSCRIPTEN_WEBSOCKET_T ws = emscripten_websocket_new(&attrs);
+    emscripten_websocket_set_onopen_callback(ws,    NULL, ws_onopen);
+    emscripten_websocket_set_onerror_callback(ws,   NULL, ws_onerror);
+    emscripten_websocket_set_onmessage_callback(ws, NULL, ws_onmessage);
+    printf("osc: connecting to ws://localhost:9001 (run tools/osc_proxy.py)\n");
+}
+
+void osc_shutdown(void) {}
 
 #else /* !__EMSCRIPTEN__ — full native UDP implementation below */
 
@@ -91,6 +208,11 @@ static void dispatch(tosc_message *msg) {
         int idx = tosc_getNextInt32(msg);
         atomic_store_explicit(&g_osc.pending_video, idx, memory_order_release);
         printf("osc: /vj/video %d\n", idx);
+
+    } else if (strcmp(addr, "/vj/shader") == 0 && fmt[0] == 'i') {
+        int idx = tosc_getNextInt32(msg);
+        atomic_store_explicit(&g_osc.pending_shader, idx, memory_order_release);
+        printf("osc: /vj/shader %d\n", idx);
 
     } else if (strcmp(addr, "/vj/stop") == 0) {
         atomic_store_explicit(&g_osc.stop_audio, 1, memory_order_release);
