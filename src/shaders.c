@@ -89,12 +89,14 @@ static int make_shader_and_pipeline(const char *fs_body, sg_shader *out_shd, sg_
                                .sample_type = SG_IMAGESAMPLETYPE_FLOAT },
         .samplers[0] = { .stage        = SG_SHADERSTAGE_FRAGMENT,
                          .sampler_type = SG_SAMPLERTYPE_FILTERING },
+        .samplers[1] = { .stage        = SG_SHADERSTAGE_FRAGMENT,
+                         .sampler_type = SG_SAMPLERTYPE_NONFILTERING },
         .texture_sampler_pairs[0] = { .stage = SG_SHADERSTAGE_FRAGMENT,
             .view_slot = 0, .sampler_slot = 0, .glsl_name = "image_tex" },
         .texture_sampler_pairs[1] = { .stage = SG_SHADERSTAGE_FRAGMENT,
-            .view_slot = 1, .sampler_slot = 0, .glsl_name = "audio_tex" },
+            .view_slot = 1, .sampler_slot = 1, .glsl_name = "audio_tex" },
         .texture_sampler_pairs[2] = { .stage = SG_SHADERSTAGE_FRAGMENT,
-            .view_slot = 2, .sampler_slot = 0, .glsl_name = "fft_tex" },
+            .view_slot = 2, .sampler_slot = 1, .glsl_name = "fft_tex" },
         .uniform_blocks[0] = {
             .stage  = SG_SHADERSTAGE_FRAGMENT,
             .size   = sizeof(ShaderParams),
@@ -120,6 +122,12 @@ static int make_shader_and_pipeline(const char *fs_body, sg_shader *out_shd, sg_
         .index_type = SG_INDEXTYPE_UINT16,
         .layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT2,
     });
+    if (sg_query_pipeline_state(pip) != SG_RESOURCESTATE_VALID) {
+        fprintf(stderr, "shaders: pipeline creation failed\n");
+        sg_destroy_shader(shd);
+        sg_destroy_pipeline(pip);
+        return 0;
+    }
     /* Do NOT destroy shd — the pipeline references it and needs it alive. */
     *out_shd = shd;
     *out_pip = pip;

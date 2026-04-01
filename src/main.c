@@ -33,7 +33,9 @@
 #include "shaders.h"
 #include "mic.h"
 
-#include "turbojpeg.h"
+#ifndef __EMSCRIPTEN__
+#  include "turbojpeg.h"
+#endif
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -96,7 +98,8 @@ static struct {
     sg_view         fft_view;
     sg_image        blank_img;     /* 1×1 transparent — default image slot */
     sg_view         blank_view;
-    sg_sampler      smp;
+    sg_sampler      smp;           /* linear — for RGBA image textures */
+    sg_sampler      float_smp;    /* nearest — for R32F audio/FFT textures (WebGL2 compat) */
 
     /* CPU upload buffers */
     float           audio_frame[AUDIO_TEX_WIDTH];
@@ -121,7 +124,7 @@ static struct {
     sg_view         video_view;
     int             video_tex_w;    /* current texture dimensions */
     int             video_tex_h;
-    tjhandle        tj;             /* reusable libjpeg-turbo decompressor */
+    void           *tj;             /* libjpeg-turbo handle (tjhandle); NULL on WASM */
 
     float           time;
 
@@ -173,7 +176,11 @@ static const char *g_script_path  = NULL;
 static const char *g_shaders_dir  = "shaders";
 static int         g_mic_mode     = 0;
 static const char *g_mic_device   = NULL;   /* NULL = "default" */
+#ifdef __EMSCRIPTEN__
+static int         g_show_fps     = 1;
+#else
 static int         g_show_fps     = 0;
+#endif
 static int         g_fullscreen   = 0;
 
 static void init(void) {
@@ -182,10 +189,20 @@ static void init(void) {
         .logger.func = vj_log,
     });
 
-    /* ---- Shared sampler ---- */
+    /* ---- Samplers ---- */
     app.smp = sg_make_sampler(&(sg_sampler_desc){
-        .min_filter = SG_FILTER_LINEAR,
-        .mag_filter = SG_FILTER_LINEAR,
+        .min_filter    = SG_FILTER_LINEAR,
+        .mag_filter    = SG_FILTER_LINEAR,
+        .mipmap_filter = SG_FILTER_LINEAR,   /* trilinear */
+        .wrap_u        = SG_WRAP_REPEAT,
+        .wrap_v        = SG_WRAP_REPEAT,
+    });
+    /* R32F textures require NEAREST filtering in WebGL2 to be texture-complete
+       (OES_texture_float_linear not guaranteed). Audio/FFT visualisation
+       doesn't benefit from linear interpolation anyway. */
+    app.float_smp = sg_make_sampler(&(sg_sampler_desc){
+        .min_filter = SG_FILTER_NEAREST,
+        .mag_filter = SG_FILTER_NEAREST,
         .wrap_u     = SG_WRAP_CLAMP_TO_EDGE,
         .wrap_v     = SG_WRAP_CLAMP_TO_EDGE,
     });
@@ -232,7 +249,8 @@ static void init(void) {
         .views[0]          = app.blank_view,  /* image slot — blank until triggered */
         .views[1]          = app.audio_view,
         .views[2]          = app.fft_view,
-        .samplers[0]       = app.smp,
+        .samplers[0]       = app.smp,         /* linear — image_tex */
+        .samplers[1]       = app.float_smp,   /* nearest — audio_tex, fft_tex */
     };
 
     app.pass_action = (sg_pass_action){
@@ -243,9 +261,11 @@ static void init(void) {
     /* ---- FFT ---- */
     app.fft_cfg = kiss_fftr_alloc(FFT_SIZE, 0, NULL, NULL);
 
-    /* ---- libjpeg-turbo (video decode) ---- */
+    /* ---- libjpeg-turbo (video decode, native only) ---- */
+#ifndef __EMSCRIPTEN__
     app.tj = tjInitDecompress();
     if (!app.tj) fprintf(stderr, "warning: tjInitDecompress failed\n");
+#endif
 
     /* ---- Audio + video state ---- */
     atomic_store(&app.current_audio, -1);
@@ -253,6 +273,10 @@ static void init(void) {
     app.current_image = -1;
     app.current_video = -1;
 
+    /* sokol_audio uses ScriptProcessorNode on WASM, which runs on the main
+       thread and disrupts frame pacing. Skip it until AudioWorklet support
+       is added. */
+#ifndef __EMSCRIPTEN__
     saudio_setup(&(saudio_desc){
         .sample_rate   = SAMPLE_RATE,
         .num_channels  = 1,
@@ -260,6 +284,7 @@ static void init(void) {
         .stream_cb     = audio_cb,
         .logger.func   = slog_func,
     });
+#endif
 
     /* ---- Microphone input (optional) ---- */
     if (g_mic_mode)
@@ -338,6 +363,15 @@ static void poll_osc(void) {
         script_call_osc("/vj/video", 'i', req_vid, 0);
     }
 
+    /* Shader trigger */
+    int req_shd = atomic_exchange_explicit(&g_osc.pending_shader, -1,
+                                           memory_order_acq_rel);
+    if (req_shd >= 0 && req_shd < g_shaders.num_shaders) {
+        g_current_shader = req_shd;
+        printf("shader[%d] %s\n", req_shd, g_shaders.shaders[req_shd].name);
+        script_call_osc("/vj/shader", 'i', req_shd, 0);
+    }
+
     /* Animate queue */
     pthread_mutex_lock(&g_osc.anim_mutex);
     while (g_osc.anim_tail != g_osc.anim_head) {
@@ -349,13 +383,28 @@ static void poll_osc(void) {
     }
     pthread_mutex_unlock(&g_osc.anim_mutex);
 
-    /* Generic queue — forward unrecognised addresses to Lua */
+    /* Generic queue — /vj/pN sets shader param N, rest forwarded to Lua */
     pthread_mutex_lock(&g_osc.q_mutex);
     while (g_osc.q_tail != g_osc.q_head) {
         OscMsg m = g_osc.queue[g_osc.q_tail];
         g_osc.q_tail = (g_osc.q_tail + 1) % OSC_QUEUE_SIZE;
         pthread_mutex_unlock(&g_osc.q_mutex);
-        script_call_osc(m.addr, m.type, m.ival, m.fval);
+
+        int pidx = -1;
+        if (strncmp(m.addr, "/vj/p", 5) == 0 && m.addr[5] != '\0') {
+            char *end;
+            long n = strtol(m.addr + 5, &end, 10);
+            if (*end == '\0' && n >= 0 && n < SHADER_PARAMS_COUNT)
+                pidx = (int)n;
+        }
+        if (pidx >= 0) {
+            float val = (m.type == 'f') ? m.fval : (float)m.ival;
+            g_shader_params.p[pidx] = val;
+            printf("p[%d] = %.3f\n", pidx, val);
+        } else {
+            script_call_osc(m.addr, m.type, m.ival, m.fval);
+        }
+
         pthread_mutex_lock(&g_osc.q_mutex);
     }
     pthread_mutex_unlock(&g_osc.q_mutex);
@@ -366,7 +415,11 @@ static void poll_osc(void) {
 /* ------------------------------------------------------------------ */
 
 static void update_video_texture(void) {
+#ifndef __EMSCRIPTEN__
     if (app.current_video < 0 || !app.tj) return;
+#else
+    if (app.current_video < 0) return;
+#endif
     VideoClip *vc = &g_clips.video[app.current_video];
 
     /* (Re)create the stream texture if size changed or first use */
@@ -459,8 +512,10 @@ static void frame(void) {
             char title[64];
             snprintf(title, sizeof(title), "fast-vj  %.1f fps", fps);
             sapp_set_window_title(title);
+#ifndef __EMSCRIPTEN__
             printf("fps: %.1f\n", fps);
             fflush(stdout);
+#endif
             app.fps_frames = 0;
             app.fps_accum  = 0.0;
         }
@@ -491,7 +546,9 @@ static void cleanup(void) {
     shaders_free();
     sg_shutdown();
     kiss_fftr_free(app.fft_cfg);
+#ifndef __EMSCRIPTEN__
     if (app.tj) tjDestroy(app.tj);
+#endif
     clips_free(&g_clips);
 }
 
@@ -525,8 +582,13 @@ sapp_desc sokol_main(int argc, char *argv[]) {
         else
             g_osc_port = atoi(argv[i]);
     }
+#ifdef __EMSCRIPTEN__
+    if (!g_media_dir)
+        g_media_dir = "media";
+#else
     if (!g_media_dir)
         g_media_dir = ".";
+#endif
 
     /* Scan media directory before the window opens */
     printf("Scanning %s ...\n", g_media_dir);
@@ -544,5 +606,6 @@ sapp_desc sokol_main(int argc, char *argv[]) {
         .window_title  = "fast-vj",
         .swap_interval = 1,
         .logger.func   = vj_log,
+        .html5.canvas_resize = true,
     };
 }

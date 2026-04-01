@@ -4,6 +4,13 @@
 
 #include "video.h"
 
+#ifndef __EMSCRIPTEN__
+#  include "turbojpeg.h"
+#else
+/* WASM: use stb_image for JPEG decode (STB_IMAGE_IMPLEMENTATION in clips.c) */
+#  include "stb_image.h"
+#endif
+
 #include <dirent.h>
 #include <string.h>
 #include <stdlib.h>
@@ -129,6 +136,7 @@ int video_load(const char *dir, VideoClip *vc) {
     free(entries);
 
     /* Width/height from first frame */
+#ifndef __EMSCRIPTEN__
     tjhandle tj = tjInitDecompress();
     if (!tj) {
         fprintf(stderr, "video: tjInitDecompress failed\n");
@@ -144,6 +152,14 @@ int video_load(const char *dir, VideoClip *vc) {
         return 0;
     }
     tjDestroy(tj);
+#else
+    int w, h, ch;
+    if (!stbi_info_from_memory(vc->source, (int)vc->sizes[0], &w, &h, &ch)) {
+        fprintf(stderr, "video: bad first frame in %s\n", dir);
+        video_unload(vc);
+        return 0;
+    }
+#endif
     vc->width  = w;
     vc->height = h;
     vc->fps    = 30.0f;
@@ -402,6 +418,7 @@ int video_load_avi(const char *file, VideoClip *vc) {
     }
 
     /* Determine w/h from first JPEG frame */
+#ifndef __EMSCRIPTEN__
     tjhandle tj = tjInitDecompress();
     if (!tj) {
         fprintf(stderr, "video: tjInitDecompress failed\n");
@@ -418,6 +435,15 @@ int video_load_avi(const char *file, VideoClip *vc) {
         return 0;
     }
     tjDestroy(tj);
+#else
+    int w, h, ch;
+    if (!stbi_info_from_memory(vc->source + vc->offsets[0],
+                               (int)vc->sizes[0], &w, &h, &ch)) {
+        fprintf(stderr, "video: bad first frame in %s\n", file);
+        video_unload(vc);
+        return 0;
+    }
+#endif
     vc->width  = w;
     vc->height = h;
 
@@ -435,17 +461,30 @@ int video_load_avi(const char *file, VideoClip *vc) {
 /* video_decode_frame                                                  */
 /* ------------------------------------------------------------------ */
 
-int video_decode_frame(VideoClip *vc, int idx, tjhandle tj) {
+int video_decode_frame(VideoClip *vc, int idx, void *tj) {
     if (idx < 0 || idx >= vc->num_frames) return -1;
     const uint8_t *src  = vc->source + vc->offsets[idx];
     size_t         size = vc->sizes[idx];
-    int ret = tjDecompress2(tj, src, (unsigned long)size,
+
+#ifndef __EMSCRIPTEN__
+    int ret = tjDecompress2((tjhandle)tj, src, (unsigned long)size,
                              vc->pixels, vc->width, 0, vc->height,
                              TJPF_RGBA, TJFLAG_FASTDCT);
     if (ret < 0) {
         fprintf(stderr, "video: decode error frame %d: %s\n", idx, tjGetErrorStr());
         return -1;
     }
+#else
+    (void)tj;
+    int w, h, ch;
+    uint8_t *px = stbi_load_from_memory(src, (int)size, &w, &h, &ch, 4);
+    if (!px) {
+        fprintf(stderr, "video: decode error frame %d: %s\n", idx, stbi_failure_reason());
+        return -1;
+    }
+    memcpy(vc->pixels, px, (size_t)(w * h * 4));
+    stbi_image_free(px);
+#endif
     return 0;
 }
 

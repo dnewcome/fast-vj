@@ -26,7 +26,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "turbojpeg.h"
 
 #define VIDEO_MAX_FRAMES 18000  /* 10 min @ 30fps */
 
@@ -64,10 +63,11 @@ int video_load_avi(const char *file, VideoClip *vc);
 
 /*
  * Decode frame index `idx` into vc->pixels.
- * `tj` is a reusable tjhandle (call tjInitDecompress() once, share it).
+ * `tj` is a reusable libjpeg-turbo handle on native builds (pass the
+ * app-owned tjhandle). Ignored on WASM builds (stb_image used instead).
  * Returns 0 on success.
  */
-int video_decode_frame(VideoClip *vc, int idx, tjhandle tj);
+int video_decode_frame(VideoClip *vc, int idx, void *tj);
 
 /* Free all memory. Does not destroy any GPU resources. */
 void video_unload(VideoClip *vc);

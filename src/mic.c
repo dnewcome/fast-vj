@@ -1,8 +1,25 @@
 /*
  * mic.c — ALSA microphone capture.
+ *
+ * On WASM: ALSA is not available in the browser. Stub functions are
+ * provided so the build succeeds; mic mode is a no-op on WASM.
  */
 
 #include "mic.h"
+
+#ifdef __EMSCRIPTEN__
+
+#include <string.h>
+
+int mic_init(const char *device, int sample_rate) {
+    (void)device; (void)sample_rate;
+    return 0;
+}
+int  mic_available(void) { return 0; }
+void mic_read(float *dst, int n) { memset(dst, 0, (size_t)n * sizeof(float)); }
+void mic_shutdown(void) {}
+
+#else /* !__EMSCRIPTEN__ — full ALSA implementation below */
 
 #include <alsa/asoundlib.h>
 #include <pthread.h>
@@ -124,3 +141,5 @@ void mic_shutdown(void) {
         s_pcm = NULL;
     }
 }
+
+#endif /* __EMSCRIPTEN__ */
