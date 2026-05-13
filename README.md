@@ -657,7 +657,7 @@ System libraries required:
 ### Ubuntu / Debian (desktop x86-64)
 
 ```bash
-sudo apt install build-essential cmake git \
+sudo apt install build-essential cmake git pkg-config \
     libgl-dev libx11-dev libxi-dev libxcursor-dev \
     libasound2-dev libturbojpeg0-dev libluajit-5.1-dev
 ```
@@ -680,7 +680,7 @@ If you see `llvmpipe`, enable the driver via `raspi-config` → Advanced Options
 → GL Driver → Full KMS, then reboot.
 
 ```bash
-sudo apt install build-essential cmake git \
+sudo apt install build-essential cmake git pkg-config \
     libgles2-mesa-dev libegl-mesa0 libegl1-mesa-dev \
     libasound2-dev libturbojpeg0-dev libluajit-5.1-dev
 ```
@@ -723,6 +723,46 @@ cmake --build build-pi -j$(nproc)
 You will need the Pi's sysroot for GL/ALSA headers. For most purposes it is
 simpler to build natively on the Pi; a Pi 4 compiles the project in a few
 seconds.
+
+---
+
+## Benchmarking
+
+`scripts/stress.sh` runs fast-vj under `patches/stress.lua` for a fixed
+window and summarizes FPS. The stress patch cycles every shader, video,
+and image at fixed cadences and sweeps all 15 shader uniforms each frame,
+so output depends only on hardware and the render pipeline — useful for
+comparing machines or detecting frame-rate regressions and drift.
+
+```bash
+./scripts/stress.sh 60          # 60-second run (default)
+./scripts/stress.sh 300         # 5 minutes — catches slow drift
+DISPLAY=:0 ./scripts/stress.sh  # over SSH
+```
+
+Sample output:
+
+```
+=== machine ===
+Linux pi4 6.1.0-rpi8-rpi-v8 ... aarch64 GNU/Linux
+OpenGL renderer string: V3D 4.2
+Model           : Raspberry Pi 4 Model B Rev 1.5
+
+=== fps summary ===
+samples : 59 (1 sample/sec)
+min     : 58.9 fps
+mean    : 59.6 fps
+max     : 59.9 fps
+first 14 : 59.8 fps
+last 14  : 59.4 fps
+drift   : -0.4 fps  (last - first)
+```
+
+`drift` is the difference between the mean of the last and first quarter
+of samples. Small values are noise; sustained negative drift signals an
+accumulating cost (texture/shader leak, growing allocator state). Override
+the binary, patch, or media dir via the `BINARY`, `PATCH`, `MEDIA_DIR`,
+and `EXTRA_ARGS` environment variables.
 
 ---
 
