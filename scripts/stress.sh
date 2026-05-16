@@ -1,19 +1,33 @@
 #!/usr/bin/env bash
-# stress.sh — run fast-vj under patches/stress.lua for a fixed window and
+# stress.sh — run fast-vj under a stress patch for a fixed window and
 # summarize FPS. Useful for comparing hardware and detecting frame-rate
 # regressions or drift over long runs.
 #
-# Usage:   scripts/stress.sh [duration_seconds]   (default 60)
+# Usage:   scripts/stress.sh [duration_seconds] [--no-vsync] [-p PATCH]
 # Env vars: BINARY, PATCH, MEDIA_DIR, OSC_PORT, EXTRA_ARGS
 
 set -euo pipefail
 
-DURATION="${1:-${DURATION:-60}}"
+DURATION="${DURATION:-60}"
 BINARY="${BINARY:-./build/fast-vj}"
 PATCH="${PATCH:-patches/stress.lua}"
 MEDIA_DIR="${MEDIA_DIR:-media}"
 OSC_PORT="${OSC_PORT:-9000}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
+NO_VSYNC=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --no-vsync) NO_VSYNC=1; shift ;;
+        -p)         PATCH="$2"; shift 2 ;;
+        -h|--help)  sed -n '2,7p' "$0"; exit 0 ;;
+        *)          DURATION="$1"; shift ;;
+    esac
+done
+
+if [ "$NO_VSYNC" = "1" ]; then
+    EXTRA_ARGS="$EXTRA_ARGS -V"
+fi
 
 if [ ! -x "$BINARY" ]; then
     echo "stress: $BINARY not found or not executable" >&2
@@ -32,13 +46,15 @@ fi
 if [ -r /proc/cpuinfo ]; then
     grep -m1 -E "model name|Hardware|Model" /proc/cpuinfo || true
 fi
+echo "vsync   : $([ "$NO_VSYNC" = "1" ] && echo OFF || echo ON)"
+echo "patch   : $PATCH"
 echo
 
 LOG=$(mktemp -t fast-vj-stress.XXXXXX)
 FPS_FILE="${LOG}.fps"
 trap 'rm -f "$LOG" "$FPS_FILE"' EXIT
 
-echo "=== run: ${DURATION}s ($BINARY $MEDIA_DIR $OSC_PORT -f -s $PATCH $EXTRA_ARGS) ==="
+echo "=== run: ${DURATION}s ($BINARY $MEDIA_DIR $OSC_PORT -f -s $PATCH$EXTRA_ARGS) ==="
 # shellcheck disable=SC2086
 "$BINARY" "$MEDIA_DIR" "$OSC_PORT" -f -s "$PATCH" $EXTRA_ARGS > "$LOG" 2>&1 &
 PID=$!

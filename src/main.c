@@ -175,6 +175,7 @@ static int         g_mic_mode     = 0;
 static const char *g_mic_device   = NULL;   /* NULL = "default" */
 static int         g_show_fps     = 0;
 static int         g_fullscreen   = 0;
+static int         g_no_vsync     = 0;
 
 static void init(void) {
     sg_setup(&(sg_desc){
@@ -515,6 +516,8 @@ sapp_desc sokol_main(int argc, char *argv[]) {
             g_show_fps = 1;
         else if (strcmp(argv[i], "-F") == 0)
             g_fullscreen = 1;
+        else if (strcmp(argv[i], "-V") == 0)
+            g_no_vsync = 1;
         else if (strcmp(argv[i], "-m") == 0) {
             g_mic_mode = 1;
             /* optional device name follows: -m hw:1,0 */
@@ -542,7 +545,7 @@ sapp_desc sokol_main(int argc, char *argv[]) {
         .height        = 720,
         .fullscreen    = g_fullscreen,
         .window_title  = "fast-vj",
-        .swap_interval = 1,
+        .swap_interval = g_no_vsync ? 0 : 1,
         .logger.func   = vj_log,
     };
 }

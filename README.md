@@ -728,17 +728,38 @@ seconds.
 
 ## Benchmarking
 
-`scripts/stress.sh` runs fast-vj under `patches/stress.lua` for a fixed
-window and summarizes FPS. The stress patch cycles every shader, video,
-and image at fixed cadences and sweeps all 15 shader uniforms each frame,
-so output depends only on hardware and the render pipeline — useful for
-comparing machines or detecting frame-rate regressions and drift.
+`scripts/stress.sh` runs fast-vj under a stress patch for a fixed
+window and summarizes FPS. Useful for comparing hardware and detecting
+frame-rate regressions or drift.
+
+Two patches are bundled:
+
+| Patch | What it stresses |
+|-------|------------------|
+| `patches/stress.lua` (default) | **Engine path** — cycles every shader, video, and image at fixed cadences and sweeps all 15 shader uniforms each frame. Independent of media files. |
+| `patches/stress_kaleidoscope.lua` | **GPU path** — locks the kaleidoscope shader on top of the first video (typically `media/test_mandelbrot.avi` from `media/make-test.sh`) and sweeps segments / spin / zoom / image-rotate across worst-case ranges. |
 
 ```bash
-./scripts/stress.sh 60          # 60-second run (default)
-./scripts/stress.sh 300         # 5 minutes — catches slow drift
-DISPLAY=:0 ./scripts/stress.sh  # over SSH
+./scripts/stress.sh 60                                          # default 60s, engine stress
+./scripts/stress.sh 300                                         # 5 min — catches slow drift
+./scripts/stress.sh 60 -p patches/stress_kaleidoscope.lua       # GPU stress (mandelbrot → kaleidoscope)
+./scripts/stress.sh 60 --no-vsync                               # uncapped fps (see note below)
+DISPLAY=:0 ./scripts/stress.sh                                  # over SSH
 ```
+
+**Generate the test video** (one-time, requires ffmpeg):
+
+```bash
+cd media && ./make-test.sh
+```
+
+**Vsync note:** `--no-vsync` passes `-V` to the binary, which sets sokol's
+`swap_interval = 0`. On a Raspberry Pi running fullscreen this uncaps the
+frame rate as expected. On a Linux desktop with a compositor (Mutter,
+KWin, etc.) the swap is still throttled to display refresh regardless of
+the application setting — to actually exceed vsync there, run fullscreen
+exclusive (`-F` via `EXTRA_ARGS=-F`) and/or set `vblank_mode=0`
+(Mesa) or `__GL_SYNC_TO_VBLANK=0` (NVIDIA) in the environment.
 
 Sample output:
 
@@ -769,7 +790,7 @@ and `EXTRA_ARGS` environment variables.
 ## Running
 
 ```bash
-./build/fast-vj <media-dir> [osc-port] [-s patch.lua] [-S shaders/] [-m [device]] [-f] [-F]
+./build/fast-vj <media-dir> [osc-port] [-s patch.lua] [-S shaders/] [-m [device]] [-f] [-F] [-V]
 ```
 
 | Flag | Description |
@@ -781,6 +802,7 @@ and `EXTRA_ARGS` environment variables.
 | `-m [device]` | Mic input mode. Optional ALSA device name (default: `default`) |
 | `-f` | Show FPS counter in window title and stdout |
 | `-F` | Launch fullscreen (Escape to quit) |
+| `-V` | Disable vsync (sokol `swap_interval = 0`) — for benchmarking |
 
 ```bash
 # Default OSC port 9000, shaders loaded from ./shaders/
