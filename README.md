@@ -732,12 +732,13 @@ seconds.
 window and summarizes FPS. Useful for comparing hardware and detecting
 frame-rate regressions or drift.
 
-Two patches are bundled:
+Three patches are bundled:
 
 | Patch | What it stresses |
 |-------|------------------|
 | `patches/stress.lua` (default) | **Engine path** — cycles every shader, video, and image at fixed cadences and sweeps all 15 shader uniforms each frame. Independent of media files. |
 | `patches/stress_kaleidoscope.lua` | **GPU path** — locks the kaleidoscope shader on top of the first video (typically `media/test_mandelbrot.avi` from `media/make-test.sh`) and sweeps segments / spin / zoom / image-rotate across worst-case ranges. |
+| `patches/stress_video.lua` | **Video baseline** — locks the default passthrough shader and plays the first video. Measures the engine's playback floor cost (JPEG decode, texture upload, one textured quad) without any shader work. |
 
 ```bash
 ./scripts/stress.sh 60                                          # default 60s, engine stress
