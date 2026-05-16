@@ -40,6 +40,20 @@
 #include <math.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <time.h>
+
+/* For glFinish() in -G GPU-time mode. Sokol picks the backend; we mirror it. */
+#if defined(SOKOL_GLES3)
+#include <GLES3/gl3.h>
+#else
+#include <GL/gl.h>
+#endif
+
+static inline double now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6;
+}
 
 /* Sokol logger — suppress benign GL uniform/sampler-not-found warnings that
    fire when the GLSL compiler optimizes away unused uniforms or samplers. */
@@ -128,6 +142,12 @@ static struct {
     /* FPS counter */
     int             fps_frames;
     double          fps_accum;
+
+    /* GPU timing (-G): per-frame draw cost via glFinish, accumulated over 1s */
+    double          gpu_ms_min;
+    double          gpu_ms_max;
+    double          gpu_ms_sum;
+    int             gpu_ms_count;
 } app;
 
 ClipList g_clips;
@@ -176,6 +196,7 @@ static const char *g_mic_device   = NULL;   /* NULL = "default" */
 static int         g_show_fps     = 0;
 static int         g_fullscreen   = 0;
 static int         g_no_vsync     = 0;
+static int         g_gpu_time     = 0;
 
 static void init(void) {
     sg_setup(&(sg_desc){
@@ -458,9 +479,19 @@ static void frame(void) {
         if (app.fps_accum >= 1.0) {
             double fps = app.fps_frames / app.fps_accum;
             char title[64];
-            snprintf(title, sizeof(title), "fast-vj  %.1f fps", fps);
+            if (g_gpu_time && app.gpu_ms_count > 0) {
+                double mean = app.gpu_ms_sum / app.gpu_ms_count;
+                snprintf(title, sizeof(title),
+                    "fast-vj  %.1f fps  %.2fms gpu", fps, mean);
+                printf("fps: %.1f gpu: %.2fms (min %.2f max %.2f)\n",
+                    fps, mean, app.gpu_ms_min, app.gpu_ms_max);
+                app.gpu_ms_min = app.gpu_ms_max = app.gpu_ms_sum = 0.0;
+                app.gpu_ms_count = 0;
+            } else {
+                snprintf(title, sizeof(title), "fast-vj  %.1f fps", fps);
+                printf("fps: %.1f\n", fps);
+            }
             sapp_set_window_title(title);
-            printf("fps: %.1f\n", fps);
             fflush(stdout);
             app.fps_frames = 0;
             app.fps_accum  = 0.0;
@@ -472,6 +503,8 @@ static void frame(void) {
     update_audio_textures();
     script_call_frame(dt);
 
+    double gpu_t0 = g_gpu_time ? now_ms() : 0.0;
+
     sg_begin_pass(&(sg_pass){
         .action    = app.pass_action,
         .swapchain = sglue_swapchain(),
@@ -482,6 +515,15 @@ static void frame(void) {
     sg_draw(0, 6, 1);
     sg_end_pass();
     sg_commit();
+
+    if (g_gpu_time) {
+        glFinish();   /* block until GPU drains — only valid for benchmarking */
+        double gpu_ms = now_ms() - gpu_t0;
+        if (app.gpu_ms_count == 0 || gpu_ms < app.gpu_ms_min) app.gpu_ms_min = gpu_ms;
+        if (gpu_ms > app.gpu_ms_max) app.gpu_ms_max = gpu_ms;
+        app.gpu_ms_sum += gpu_ms;
+        app.gpu_ms_count++;
+    }
 }
 
 static void cleanup(void) {
@@ -518,6 +560,10 @@ sapp_desc sokol_main(int argc, char *argv[]) {
             g_fullscreen = 1;
         else if (strcmp(argv[i], "-V") == 0)
             g_no_vsync = 1;
+        else if (strcmp(argv[i], "-G") == 0) {
+            g_gpu_time = 1;
+            g_show_fps = 1;   /* -G implies the per-second FPS print */
+        }
         else if (strcmp(argv[i], "-m") == 0) {
             g_mic_mode = 1;
             /* optional device name follows: -m hw:1,0 */

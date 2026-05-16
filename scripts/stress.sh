@@ -3,7 +3,7 @@
 # summarize FPS. Useful for comparing hardware and detecting frame-rate
 # regressions or drift over long runs.
 #
-# Usage:   scripts/stress.sh [duration_seconds] [--no-vsync] [-p PATCH]
+# Usage:   scripts/stress.sh [duration_seconds] [--no-vsync] [--gpu-time] [-p PATCH]
 # Env vars: BINARY, PATCH, MEDIA_DIR, OSC_PORT, EXTRA_ARGS
 
 set -euo pipefail
@@ -15,19 +15,20 @@ MEDIA_DIR="${MEDIA_DIR:-media}"
 OSC_PORT="${OSC_PORT:-9000}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 NO_VSYNC=0
+GPU_TIME=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-vsync) NO_VSYNC=1; shift ;;
+        --gpu-time) GPU_TIME=1; shift ;;
         -p)         PATCH="$2"; shift 2 ;;
         -h|--help)  sed -n '2,7p' "$0"; exit 0 ;;
         *)          DURATION="$1"; shift ;;
     esac
 done
 
-if [ "$NO_VSYNC" = "1" ]; then
-    EXTRA_ARGS="$EXTRA_ARGS -V"
-fi
+if [ "$NO_VSYNC" = "1" ]; then EXTRA_ARGS="$EXTRA_ARGS -V"; fi
+if [ "$GPU_TIME" = "1" ]; then EXTRA_ARGS="$EXTRA_ARGS -G"; fi
 
 if [ ! -x "$BINARY" ]; then
     echo "stress: $BINARY not found or not executable" >&2
@@ -52,7 +53,8 @@ echo
 
 LOG=$(mktemp -t fast-vj-stress.XXXXXX)
 FPS_FILE="${LOG}.fps"
-trap 'rm -f "$LOG" "$FPS_FILE"' EXIT
+GPU_FILE="${LOG}.gpu"
+trap 'rm -f "$LOG" "$FPS_FILE" "$GPU_FILE"' EXIT
 
 echo "=== run: ${DURATION}s ($BINARY $MEDIA_DIR $OSC_PORT -f -s $PATCH$EXTRA_ARGS) ==="
 # shellcheck disable=SC2086
@@ -70,7 +72,11 @@ kill -KILL "$PID" 2>/dev/null || true
 wait "$PID" 2>/dev/null || true
 
 # Drop the first sample (warm-up) and keep timeline order for drift.
+# fps line format:
+#   fps: 60.0
+#   fps: 60.0 gpu: 12.34ms (min 11.20 max 14.10)   ← when -G is set
 grep '^fps:' "$LOG" | awk 'NR>1 { print $2 }' > "$FPS_FILE"
+grep '^fps:' "$LOG" | awk 'NR>1 && $3=="gpu:" { print $4 }' | sed 's/ms//' > "$GPU_FILE"
 
 if [ ! -s "$FPS_FILE" ]; then
     echo "stress: no fps samples captured. full log:" >&2
@@ -103,3 +109,31 @@ END {
     printf "last %d  : %.1f fps\n", q, last
     printf "drift   : %+.1f fps  (last - first)\n", last - first
 }' "$FPS_FILE"
+
+if [ -s "$GPU_FILE" ]; then
+    echo
+    echo "=== gpu time summary (per-frame draw, glFinish) ==="
+    awk '
+    {
+        a[NR] = $1
+        sum  += $1
+        if (NR == 1 || $1 > max) max = $1
+        if (NR == 1 || $1 < min) min = $1
+    }
+    END {
+        n = NR
+        mean = sum / n
+        q = int(n / 4); if (q < 1) q = 1
+        first = 0; last = 0
+        for (i = 1;       i <= q; i++) first += a[i]
+        for (i = n-q+1;   i <= n; i++) last  += a[i]
+        first /= q; last /= q
+        printf "samples : %d\n", n
+        printf "min     : %.2f ms\n", min
+        printf "mean    : %.2f ms (%.0f%% of 16.7ms vsync budget)\n", mean, mean / 16.7 * 100.0
+        printf "max     : %.2f ms\n", max
+        printf "first %d : %.2f ms\n", q, first
+        printf "last %d  : %.2f ms\n", q, last
+        printf "drift   : %+.2f ms  (last - first)\n", last - first
+    }' "$GPU_FILE"
+fi

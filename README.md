@@ -754,12 +754,22 @@ cd media && ./make-test.sh
 ```
 
 **Vsync note:** `--no-vsync` passes `-V` to the binary, which sets sokol's
-`swap_interval = 0`. On a Raspberry Pi running fullscreen this uncaps the
-frame rate as expected. On a Linux desktop with a compositor (Mutter,
-KWin, etc.) the swap is still throttled to display refresh regardless of
-the application setting — to actually exceed vsync there, run fullscreen
-exclusive (`-F` via `EXTRA_ARGS=-F`) and/or set `vblank_mode=0`
-(Mesa) or `__GL_SYNC_TO_VBLANK=0` (NVIDIA) in the environment.
+`swap_interval = 0`. Many Wayland compositors (Mutter, wayfire, labwc,
+etc.) ignore the application's swap-interval and throttle to display
+refresh regardless. When that happens a workload taking just over 16.7ms
+gets vsync-rounded down to 30 fps, which looks much worse than reality.
+
+When fps alone can't tell you what's going on, add `--gpu-time`:
+
+```bash
+./scripts/stress.sh 60 --gpu-time -p patches/stress_kaleidoscope.lua
+```
+
+This passes `-G` to the binary, which calls `glFinish()` after each
+draw and reports per-frame GPU cost in milliseconds — independent of
+vsync and the compositor. A kaleidoscope showing `fps: 30, gpu: 17ms`
+is a Pi just barely missing vsync; `fps: 30, gpu: 30ms` is genuinely
+GPU-bound.
 
 Sample output:
 
@@ -803,6 +813,7 @@ and `EXTRA_ARGS` environment variables.
 | `-f` | Show FPS counter in window title and stdout |
 | `-F` | Launch fullscreen (Escape to quit) |
 | `-V` | Disable vsync (sokol `swap_interval = 0`) — for benchmarking |
+| `-G` | Time each frame's GPU work via `glFinish` and print `gpu: X.XXms` alongside `fps:` (implies `-f`). Stalls the pipeline; benchmarking only. |
 
 ```bash
 # Default OSC port 9000, shaders loaded from ./shaders/
