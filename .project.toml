@@ -10,5 +10,5 @@ devlog_tag = "fast-vj"
 devlog_dest = "../dnuke.com/src/devlog"
 
 [devlog]
-version = "v1.0"
+version = "v1.2"
 source = "https://github.com/dnewcome/devlog-tools"
