@@ -1,0 +1,14 @@
+id = "fa0396d8-962d-43bd-9db0-23eae0c87611"
+slug = "fast-vj"
+name = "fast-vj"
+description = "A fast, minimal live-visuals (VJ) engine — video clips, hot-swappable GLSL shaders, OSC control, and Lua scripting; runs native on Raspberry Pi and in the browser via WASM."
+tags = ["vj", "visuals", "opengl", "shaders", "glsl", "osc", "lua", "raspberry-pi", "wasm", "creative-code"]
+
+[publish]
+site = "dnuke.com"
+devlog_tag = "fast-vj"
+devlog_dest = "../dnuke.com/src/devlog"
+
+[devlog]
+version = "v1.0"
+source = "https://github.com/dnewcome/devlog-tools"
